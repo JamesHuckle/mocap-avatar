@@ -39,6 +39,6 @@
 
 
 
-
+`uv run python3 scripts/servo_client.py --robot ws://192.168.0.104:8766`
 
 

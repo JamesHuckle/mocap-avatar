@@ -1,26 +1,26 @@
-import {Box, Text, VStack, HStack, Grid, GridItem} from '@chakra-ui/react';
+import {Box, Text, VStack, HStack, Grid, GridItem, Input, Button, Badge, Slider, SliderTrack, SliderFilledTrack, SliderThumb, Switch} from '@chakra-ui/react';
 import {NormalizedLandmark} from '@mediapipe/tasks-vision';
+import {useState, useEffect, useRef} from 'react';
+import {useServoConnection, ALL_SERVOS, DEFAULT_ENABLED_SERVOS, DEFAULT_MIN_PULSE, DEFAULT_MAX_PULSE} from '../hooks/useServoConnection';
 
-// TonyPi Servo Configuration
-export const SERVO_CONFIG = {
-  '1': {name: 'left_ankle_roll', group: 'left_leg'},
-  '2': {name: 'left_ankle_pitch', group: 'left_leg'},
-  '3': {name: 'left_knee_pitch', group: 'left_leg'},
-  '4': {name: 'left_hip_pitch', group: 'left_leg'},
-  '5': {name: 'left_hip_roll', group: 'left_leg'},
-  '6': {name: 'left_elbow_pitch', group: 'left_arm'},
-  '7': {name: 'left_shoulder_roll', group: 'left_arm'},
-  '8': {name: 'left_shoulder_pitch', group: 'left_arm'},
-  '9': {name: 'right_ankle_roll', group: 'right_leg'},
-  '10': {name: 'right_ankle_pitch', group: 'right_leg'},
-  '11': {name: 'right_elbow_pitch', group: 'right_arm'},
-  '12': {name: 'right_hip_pitch', group: 'right_leg'},
-  '13': {name: 'right_hip_roll', group: 'right_leg'},
-  '14': {name: 'right_elbow_pitch2', group: 'right_arm'},
-  '15': {name: 'right_shoulder_roll', group: 'right_arm'},
-  '16': {name: 'right_shoulder_pitch', group: 'right_arm'},
-  'PW1': {name: 'neck_twist', group: 'neck'},
-  'PW2': {name: 'neck_pitch', group: 'neck'},
+// TonyPi Servo Configuration - Updated mappings
+export const SERVO_CONFIG: Record<string, {name: string; group: string}> = {
+  '1': {name: 'left_ankle_side', group: 'left_leg'},
+  '2': {name: 'left_ankle_up', group: 'left_leg'},
+  '3': {name: 'left_knee_up', group: 'left_leg'},
+  '4': {name: 'left_hip_up', group: 'left_leg'},
+  '5': {name: 'left_hip_side', group: 'left_leg'},
+  '6': {name: 'left_elbow_up', group: 'left_arm'},
+  '7': {name: 'left_shoulder_side', group: 'left_arm'},
+  '8': {name: 'left_shoulder_rotate', group: 'left_arm'},
+  '9': {name: 'right_ankle_side', group: 'right_leg'},
+  '10': {name: 'right_ankle_up', group: 'right_leg'},
+  '11': {name: 'right_knee_up', group: 'right_leg'},
+  '12': {name: 'right_hip_up', group: 'right_leg'},
+  '13': {name: 'right_hip_side', group: 'right_leg'},
+  '14': {name: 'right_elbow_up', group: 'right_arm'},
+  '15': {name: 'right_shoulder_side', group: 'right_arm'},
+  '16': {name: 'right_shoulder_rotate', group: 'right_arm'},
 } as const;
 
 // MediaPipe Pose Landmark indices
@@ -112,7 +112,6 @@ export function calculateServoAngles(
   if (!lm || lm.length < 33) return angles;
 
   // Get landmarks
-  const nose = lm[MP.NOSE];
   const lShoulder = lm[MP.LEFT_SHOULDER];
   const rShoulder = lm[MP.RIGHT_SHOULDER];
   const lElbow = lm[MP.LEFT_ELBOW];
@@ -128,122 +127,132 @@ export function calculateServoAngles(
   const lFoot = lm[MP.LEFT_FOOT_INDEX];
   const rFoot = lm[MP.RIGHT_FOOT_INDEX];
 
-  // Neck center
-  const neck = {
-    x: (lShoulder.x + rShoulder.x) / 2,
-    y: (lShoulder.y + rShoulder.y) / 2,
-    z: (lShoulder.z + rShoulder.z) / 2,
-  };
-
-  // === NECK ===
-  // PW1: neck_twist - left/right rotation
-  const neckTwist = Math.atan2(nose.x - neck.x, Math.abs(nose.z - neck.z) + 0.01) * (180 / Math.PI);
-  angles['PW1'] = mapToServo(neckTwist, 0, 45); // ±45° head turn = full servo range
-
-  // PW2: neck_pitch - up/down tilt
-  const neckPitch = Math.atan2(neck.y - nose.y, Math.abs(nose.z - neck.z) + 0.01) * (180 / Math.PI);
-  angles['PW2'] = mapToServo(neckPitch, 45, 30); // Looking slightly down = neutral
-
   // === LEFT ARM ===
-  // Servo 8: left_shoulder_pitch - arm angle from torso
+  // Servo 8: left_shoulder_rotate - arm rotation from torso
   // 0° = arm along body, 90° = arm horizontal, 180° = arm up
   const lShoulderAngle = calcLimbAngle(lShoulder, lElbow, lHip);
   angles['8'] = mapToServo(lShoulderAngle, 0, 90); // Arm down = 90° servo
   
-  // Servo 7: left_shoulder_roll - arm forward/backward
+  // Servo 7: left_shoulder_side - arm forward/backward
   const lShoulderRoll = calcRoll(lShoulder, lElbow);
   angles['7'] = mapToServo(lShoulderRoll, 0, 45);
   
-  // Servo 6: left_elbow_pitch - elbow bend (180° = straight)
+  // Servo 6: left_elbow_up - elbow bend (180° = straight)
   const lElbowAngle = calcJointAngle(lShoulder, lElbow, lWrist);
   angles['6'] = mapToServo(lElbowAngle, 180, 90); // Straight arm = 90° servo
 
   // === RIGHT ARM ===
-  // Servo 16: right_shoulder_pitch
+  // Servo 16: right_shoulder_rotate
   const rShoulderAngle = calcLimbAngle(rShoulder, rElbow, rHip);
   angles['16'] = mapToServo(rShoulderAngle, 0, 90, true); // Inverted for right side
   
-  // Servo 15: right_shoulder_roll
+  // Servo 15: right_shoulder_side
   const rShoulderRoll = calcRoll(rShoulder, rElbow);
   angles['15'] = mapToServo(rShoulderRoll, 0, 45, true);
   
-  // Servo 11: right_elbow_pitch
+  // Servo 14: right_elbow_up
   const rElbowAngle = calcJointAngle(rShoulder, rElbow, rWrist);
-  angles['11'] = mapToServo(rElbowAngle, 180, 90, true);
+  angles['14'] = mapToServo(rElbowAngle, 180, 90, true);
 
-  // Servo 14: right_elbow_pitch2 - forearm twist
-  const rForearmRoll = calcRoll(rElbow, rWrist);
-  angles['14'] = mapToServo(rForearmRoll, 0, 45);
+  // Servo 11: right_knee_up (placeholder - knee not arm)
+  // Note: This should map to actual knee if using leg tracking
+  angles['11'] = 90;
 
   // === LEFT LEG ===
-  // Servo 4: left_hip_pitch - leg angle from torso (180° = straight down)
+  // Servo 4: left_hip_up - leg angle from torso
   const lHipAngle = calcLimbAngle(lHip, lKnee, lShoulder);
-  angles['4'] = mapToServo(180 - lHipAngle, 0, 60); // Leg down = 90° servo
+  angles['4'] = mapToServo(180 - lHipAngle, 0, 60);
   
-  // Servo 5: left_hip_roll
+  // Servo 5: left_hip_side
   const lHipRoll = calcRoll(lHip, lKnee);
   angles['5'] = mapToServo(lHipRoll, 0, 30);
 
-  // Servo 3: left_knee_pitch (180° = straight leg)
+  // Servo 3: left_knee_up (180° = straight leg)
   const lKneeAngle = calcJointAngle(lHip, lKnee, lAnkle);
   angles['3'] = mapToServo(lKneeAngle, 180, 90);
 
-  // Servo 2: left_ankle_pitch
+  // Servo 2: left_ankle_up
   const lAnkleAngle = calcJointAngle(lKnee, lAnkle, lFoot);
-  angles['2'] = mapToServo(lAnkleAngle, 90, 45); // Foot perpendicular = neutral
+  angles['2'] = mapToServo(lAnkleAngle, 90, 45);
 
-  // Servo 1: left_ankle_roll
+  // Servo 1: left_ankle_side
   const lAnkleRoll = calcRoll(lAnkle, lFoot);
   angles['1'] = mapToServo(lAnkleRoll, 0, 20);
 
   // === RIGHT LEG ===
-  // Servo 12: right_hip_pitch
+  // Servo 12: right_hip_up
   const rHipAngle = calcLimbAngle(rHip, rKnee, rShoulder);
   angles['12'] = mapToServo(180 - rHipAngle, 0, 60, true);
   
-  // Servo 13: right_hip_roll
+  // Servo 13: right_hip_side
   const rHipRoll = calcRoll(rHip, rKnee);
   angles['13'] = mapToServo(rHipRoll, 0, 30, true);
 
-  // Servo 10: right_ankle_pitch
+  // Servo 11: right_knee_up
+  const rKneeAngle = calcJointAngle(rHip, rKnee, rAnkle);
+  angles['11'] = mapToServo(rKneeAngle, 180, 90, true);
+
+  // Servo 10: right_ankle_up
   const rAnkleAngle = calcJointAngle(rKnee, rAnkle, rFoot);
   angles['10'] = mapToServo(rAnkleAngle, 90, 45, true);
 
-  // Servo 9: right_ankle_roll
+  // Servo 9: right_ankle_side
   const rAnkleRoll = calcRoll(rAnkle, rFoot);
   angles['9'] = mapToServo(rAnkleRoll, 0, 20, true);
 
   return angles;
 }
 
-// Servo indicator component
-function ServoIndicator({id, name, angle, group, info}: {
+// Servo indicator component with enable toggle
+function ServoIndicator({id, name, angle, group, streaming, enabled, onToggle}: {
   id: string; 
   name: string; 
   angle: number; 
   group: string;
-  info?: string;
+  streaming?: boolean;
+  enabled: boolean;
+  onToggle: (id: string) => void;
 }) {
   const groupColors: Record<string, string> = {
     left_arm: '#3b82f6',
     right_arm: '#ef4444',
     left_leg: '#22c55e',
     right_leg: '#f97316',
-    neck: '#a855f7',
   };
 
-  const color = groupColors[group] || '#6b7280';
+  const color = enabled ? (groupColors[group] || '#6b7280') : '#4a5568';
   const displayAngle = isNaN(angle) ? 90 : Math.round(angle);
+  const isStreaming = streaming && enabled;
 
   return (
-    <Box bg="gray.800" borderRadius="md" p={2} borderLeft="4px solid" borderLeftColor={color}>
+    <Box 
+      bg={enabled ? "gray.800" : "gray.900"} 
+      borderRadius="md" 
+      p={3} 
+      borderLeft="4px solid" 
+      borderLeftColor={color}
+      opacity={enabled ? 1 : 0.5}
+      cursor="pointer"
+      onClick={() => onToggle(id)}
+      _hover={{bg: enabled ? "gray.750" : "gray.850"}}
+      transition="all 0.15s"
+    >
       <HStack justify="space-between" mb={1}>
-        <Text fontSize="xs" color="gray.400" fontWeight="bold">{id}</Text>
-        <Text fontSize="lg" color="white" fontWeight="bold">{displayAngle}°</Text>
+        <HStack spacing={2}>
+          <Text fontSize="sm" color="gray.400" fontWeight="bold">{id}</Text>
+          <Switch 
+            size="sm" 
+            isChecked={enabled} 
+            onChange={() => onToggle(id)}
+            colorScheme="green"
+            onClick={(e) => e.stopPropagation()}
+          />
+          {isStreaming && <Text fontSize="10px" color="green.400">●</Text>}
+        </HStack>
+        <Text fontSize="xl" color="white" fontWeight="bold">{displayAngle}°</Text>
       </HStack>
-      <Text fontSize="xs" color="gray.300" noOfLines={1}>{name.replace(/_/g, ' ')}</Text>
-      {info && <Text fontSize="7px" color="gray.500">{info}</Text>}
-      <Box mt={1} h="6px" bg="gray.700" borderRadius="full" overflow="hidden">
+      <Text fontSize="sm" color="gray.300" noOfLines={1}>{name.replace(/_/g, ' ')}</Text>
+      <Box mt={2} h="8px" bg="gray.700" borderRadius="full" overflow="hidden">
         <Box h="100%" w={`${(displayAngle / 180) * 100}%`} bg={color} transition="width 0.05s" />
       </Box>
     </Box>
@@ -331,6 +340,9 @@ function StickFigure({landmarks}: {landmarks?: NormalizedLandmark[]}) {
   );
 }
 
+// Throttle interval in ms (20Hz = 50ms)
+const SEND_INTERVAL_MS = 50;
+
 // Main component
 export default function ServoMapping({
   poseLandmarks,
@@ -339,67 +351,241 @@ export default function ServoMapping({
   poseLandmarks?: NormalizedLandmark[];
   worldLandmarks?: NormalizedLandmark[];
 }) {
+  const [robotUrl, setRobotUrl] = useState('ws://192.168.0.104:8766');
+  const [streaming, setStreaming] = useState(false);
+  const [minPulse, setMinPulse] = useState(DEFAULT_MIN_PULSE);
+  const [maxPulse, setMaxPulse] = useState(DEFAULT_MAX_PULSE);
+  const [enabledServos, setEnabledServos] = useState<Set<string>>(() => new Set(DEFAULT_ENABLED_SERVOS));
+  const lastSendRef = useRef<number>(0);
+
+  const toggleServo = (id: string) => {
+    setEnabledServos(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const enableGroup = (group: string) => {
+    setEnabledServos(prev => {
+      const next = new Set(prev);
+      ALL_SERVOS.forEach(id => {
+        if (SERVO_CONFIG[id]?.group === group) next.add(id);
+      });
+      return next;
+    });
+  };
+
+  const disableGroup = (group: string) => {
+    setEnabledServos(prev => {
+      const next = new Set(prev);
+      ALL_SERVOS.forEach(id => {
+        if (SERVO_CONFIG[id]?.group === group) next.delete(id);
+      });
+      return next;
+    });
+  };
+
+  const enableAll = () => setEnabledServos(new Set(ALL_SERVOS));
+  const disableAll = () => setEnabledServos(new Set());
+  const resetToDefault = () => setEnabledServos(new Set(DEFAULT_ENABLED_SERVOS));
+
+  const servo = useServoConnection(robotUrl, {minPulse, maxPulse, enabledServos});
   const angles = poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {};
 
+  // Stream servo data when enabled
+  useEffect(() => {
+    if (!streaming || !servo.connected || !poseLandmarks) return;
+
+    const now = Date.now();
+    if (now - lastSendRef.current >= SEND_INTERVAL_MS) {
+      servo.sendServos(angles);
+      lastSendRef.current = now;
+    }
+  }, [streaming, servo.connected, poseLandmarks, angles, servo]);
+
+  const handleConnect = () => {
+    if (servo.connected) {
+      setStreaming(false);
+      servo.disconnect();
+    } else {
+      servo.connect();
+    }
+  };
+
+  const enabledCount = enabledServos.size;
+
   return (
-    <Box bg="gray.900" borderRadius="xl" p={3} color="white" maxH="100vh" overflowY="auto">
-      <Text fontSize="md" fontWeight="bold" mb={2} textAlign="center">TonyPi Servos</Text>
+    <Box bg="gray.900" borderRadius="xl" p={4} color="white" maxH="100vh" overflowY="auto" minW="420px">
+      <Text fontSize="xl" fontWeight="bold" mb={3} textAlign="center">TonyPi Servo Control</Text>
+
+      {/* Connection Controls */}
+      <Box bg="gray.800" borderRadius="lg" p={3} mb={4}>
+        <HStack mb={3}>
+          <Input
+            size="md"
+            value={robotUrl}
+            onChange={(e) => setRobotUrl(e.target.value)}
+            placeholder="ws://192.168.0.104:8766"
+            disabled={servo.connected}
+            bg="gray.700"
+            border="none"
+          />
+          <Button
+            size="md"
+            colorScheme={servo.connected ? 'red' : 'green'}
+            onClick={handleConnect}
+            isLoading={servo.connecting}
+            minW="100px"
+          >
+            {servo.connected ? 'Disconnect' : 'Connect'}
+          </Button>
+        </HStack>
+
+        <HStack justify="space-between" mb={3}>
+          <HStack>
+            <Badge colorScheme={servo.connected ? 'green' : 'gray'} fontSize="sm" px={2} py={1}>
+              {servo.connected ? '● Connected' : '○ Disconnected'}
+            </Badge>
+            {servo.error && <Badge colorScheme="red">{servo.error}</Badge>}
+          </HStack>
+
+          {servo.connected && (
+            <HStack>
+              <Button
+                size="sm"
+                colorScheme="yellow"
+                onClick={() => {
+                  setStreaming(false);
+                  servo.reset();
+                }}
+              >
+                ⟲ Reset
+              </Button>
+              <Button
+                size="sm"
+                colorScheme={streaming ? 'orange' : 'blue'}
+                onClick={() => setStreaming(s => !s)}
+              >
+                {streaming ? '⏸ Stop' : '▶ Stream'}
+              </Button>
+            </HStack>
+          )}
+        </HStack>
+
+        {/* Pulse Limits */}
+        <Box bg="gray.750" borderRadius="md" p={3} mb={3}>
+          <Text fontSize="sm" fontWeight="bold" mb={2}>Pulse Limits</Text>
+          <HStack spacing={4}>
+            <VStack flex={1} align="stretch" spacing={1}>
+              <HStack justify="space-between">
+                <Text fontSize="xs" color="gray.400">Min</Text>
+                <Text fontSize="sm" fontWeight="bold">{minPulse}</Text>
+              </HStack>
+              <Slider value={minPulse} min={0} max={500} onChange={setMinPulse}>
+                <SliderTrack bg="gray.600"><SliderFilledTrack bg="blue.400" /></SliderTrack>
+                <SliderThumb />
+              </Slider>
+            </VStack>
+            <VStack flex={1} align="stretch" spacing={1}>
+              <HStack justify="space-between">
+                <Text fontSize="xs" color="gray.400">Max</Text>
+                <Text fontSize="sm" fontWeight="bold">{maxPulse}</Text>
+              </HStack>
+              <Slider value={maxPulse} min={500} max={1000} onChange={setMaxPulse}>
+                <SliderTrack bg="gray.600"><SliderFilledTrack bg="blue.400" /></SliderTrack>
+                <SliderThumb />
+              </Slider>
+            </VStack>
+          </HStack>
+        </Box>
+
+        {/* Quick Controls */}
+        <HStack justify="center" spacing={2} flexWrap="wrap">
+          <Button size="xs" onClick={enableAll}>Enable All</Button>
+          <Button size="xs" onClick={disableAll}>Disable All</Button>
+          <Button size="xs" colorScheme="blue" onClick={resetToDefault}>Shoulders Only</Button>
+        </HStack>
+
+        {streaming && (
+          <Text fontSize="sm" color="orange.300" mt={2} textAlign="center">
+            ⚠️ {enabledCount} servos active • {Math.round(1000 / SEND_INTERVAL_MS)}Hz • Pulse {minPulse}-{maxPulse}
+          </Text>
+        )}
+      </Box>
 
       <StickFigure landmarks={poseLandmarks} />
 
-      <HStack justify="center" spacing={2} my={2} flexWrap="wrap">
-        <HStack><Box w={2} h={2} bg="#3b82f6" borderRadius="full" /><Text fontSize="xs">L_ARM</Text></HStack>
-        <HStack><Box w={2} h={2} bg="#ef4444" borderRadius="full" /><Text fontSize="xs">R_ARM</Text></HStack>
-        <HStack><Box w={2} h={2} bg="#22c55e" borderRadius="full" /><Text fontSize="xs">L_LEG</Text></HStack>
-        <HStack><Box w={2} h={2} bg="#f97316" borderRadius="full" /><Text fontSize="xs">R_LEG</Text></HStack>
+      {/* Group Quick Toggle */}
+      <HStack justify="center" spacing={3} my={3} flexWrap="wrap">
+        <HStack>
+          <Box w={3} h={3} bg="#3b82f6" borderRadius="full" />
+          <Text fontSize="sm">L_ARM</Text>
+          <Button size="xs" variant="ghost" onClick={() => enableGroup('left_arm')}>+</Button>
+          <Button size="xs" variant="ghost" onClick={() => disableGroup('left_arm')}>-</Button>
+        </HStack>
+        <HStack>
+          <Box w={3} h={3} bg="#ef4444" borderRadius="full" />
+          <Text fontSize="sm">R_ARM</Text>
+          <Button size="xs" variant="ghost" onClick={() => enableGroup('right_arm')}>+</Button>
+          <Button size="xs" variant="ghost" onClick={() => disableGroup('right_arm')}>-</Button>
+        </HStack>
+        <HStack>
+          <Box w={3} h={3} bg="#22c55e" borderRadius="full" />
+          <Text fontSize="sm">L_LEG</Text>
+          <Button size="xs" variant="ghost" onClick={() => enableGroup('left_leg')}>+</Button>
+          <Button size="xs" variant="ghost" onClick={() => disableGroup('left_leg')}>-</Button>
+        </HStack>
+        <HStack>
+          <Box w={3} h={3} bg="#f97316" borderRadius="full" />
+          <Text fontSize="sm">R_LEG</Text>
+          <Button size="xs" variant="ghost" onClick={() => enableGroup('right_leg')}>+</Button>
+          <Button size="xs" variant="ghost" onClick={() => disableGroup('right_leg')}>-</Button>
+        </HStack>
       </HStack>
 
-      <Grid templateColumns="repeat(2, 1fr)" gap={2}>
-        <GridItem colSpan={2}>
-          <Text fontSize="xs" fontWeight="bold" color="purple.300" mb={1}>Neck</Text>
-          <HStack spacing={2}>
-            <ServoIndicator id="PW1" name="neck_twist" angle={angles['PW1'] ?? 90} group="neck" info="head L/R" />
-            <ServoIndicator id="PW2" name="neck_pitch" angle={angles['PW2'] ?? 90} group="neck" info="head U/D" />
-          </HStack>
-        </GridItem>
-
+      <Grid templateColumns="repeat(2, 1fr)" gap={3}>
         <GridItem>
-          <Text fontSize="xs" fontWeight="bold" color="blue.300" mb={1}>Left Arm</Text>
-          <VStack spacing={1} align="stretch">
-            <ServoIndicator id="8" name="left_shoulder_pitch" angle={angles['8'] ?? 90} group="left_arm" info="arm↕ from body" />
-            <ServoIndicator id="7" name="left_shoulder_roll" angle={angles['7'] ?? 90} group="left_arm" info="arm fwd/back" />
-            <ServoIndicator id="6" name="left_elbow_pitch" angle={angles['6'] ?? 90} group="left_arm" info="elbow bend" />
+          <Text fontSize="sm" fontWeight="bold" color="blue.300" mb={2}>Left Arm</Text>
+          <VStack spacing={2} align="stretch">
+            <ServoIndicator id="8" name="left_shoulder_rotate" angle={angles['8'] ?? 90} group="left_arm" streaming={streaming} enabled={enabledServos.has('8')} onToggle={toggleServo} />
+            <ServoIndicator id="7" name="left_shoulder_side" angle={angles['7'] ?? 90} group="left_arm" streaming={streaming} enabled={enabledServos.has('7')} onToggle={toggleServo} />
+            <ServoIndicator id="6" name="left_elbow_up" angle={angles['6'] ?? 90} group="left_arm" streaming={streaming} enabled={enabledServos.has('6')} onToggle={toggleServo} />
           </VStack>
         </GridItem>
 
         <GridItem>
-          <Text fontSize="xs" fontWeight="bold" color="red.300" mb={1}>Right Arm</Text>
-          <VStack spacing={1} align="stretch">
-            <ServoIndicator id="16" name="right_shoulder_pitch" angle={angles['16'] ?? 90} group="right_arm" info="arm↕ from body" />
-            <ServoIndicator id="15" name="right_shoulder_roll" angle={angles['15'] ?? 90} group="right_arm" info="arm fwd/back" />
-            <ServoIndicator id="11" name="right_elbow_pitch" angle={angles['11'] ?? 90} group="right_arm" info="elbow bend" />
-            <ServoIndicator id="14" name="right_elbow_pitch2" angle={angles['14'] ?? 90} group="right_arm" info="forearm twist" />
+          <Text fontSize="sm" fontWeight="bold" color="red.300" mb={2}>Right Arm</Text>
+          <VStack spacing={2} align="stretch">
+            <ServoIndicator id="16" name="right_shoulder_rotate" angle={angles['16'] ?? 90} group="right_arm" streaming={streaming} enabled={enabledServos.has('16')} onToggle={toggleServo} />
+            <ServoIndicator id="15" name="right_shoulder_side" angle={angles['15'] ?? 90} group="right_arm" streaming={streaming} enabled={enabledServos.has('15')} onToggle={toggleServo} />
+            <ServoIndicator id="14" name="right_elbow_up" angle={angles['14'] ?? 90} group="right_arm" streaming={streaming} enabled={enabledServos.has('14')} onToggle={toggleServo} />
           </VStack>
         </GridItem>
 
         <GridItem>
-          <Text fontSize="xs" fontWeight="bold" color="green.300" mb={1}>Left Leg</Text>
-          <VStack spacing={1} align="stretch">
-            <ServoIndicator id="5" name="left_hip_roll" angle={angles['5'] ?? 90} group="left_leg" info="leg in/out" />
-            <ServoIndicator id="4" name="left_hip_pitch" angle={angles['4'] ?? 90} group="left_leg" info="leg fwd/back" />
-            <ServoIndicator id="3" name="left_knee_pitch" angle={angles['3'] ?? 90} group="left_leg" info="knee bend" />
-            <ServoIndicator id="2" name="left_ankle_pitch" angle={angles['2'] ?? 90} group="left_leg" info="foot U/D" />
-            <ServoIndicator id="1" name="left_ankle_roll" angle={angles['1'] ?? 90} group="left_leg" info="foot tilt" />
+          <Text fontSize="sm" fontWeight="bold" color="green.300" mb={2}>Left Leg</Text>
+          <VStack spacing={2} align="stretch">
+            <ServoIndicator id="5" name="left_hip_side" angle={angles['5'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('5')} onToggle={toggleServo} />
+            <ServoIndicator id="4" name="left_hip_up" angle={angles['4'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('4')} onToggle={toggleServo} />
+            <ServoIndicator id="3" name="left_knee_up" angle={angles['3'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('3')} onToggle={toggleServo} />
+            <ServoIndicator id="2" name="left_ankle_up" angle={angles['2'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('2')} onToggle={toggleServo} />
+            <ServoIndicator id="1" name="left_ankle_side" angle={angles['1'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('1')} onToggle={toggleServo} />
           </VStack>
         </GridItem>
 
         <GridItem>
-          <Text fontSize="xs" fontWeight="bold" color="orange.300" mb={1}>Right Leg</Text>
-          <VStack spacing={1} align="stretch">
-            <ServoIndicator id="13" name="right_hip_roll" angle={angles['13'] ?? 90} group="right_leg" info="leg in/out" />
-            <ServoIndicator id="12" name="right_hip_pitch" angle={angles['12'] ?? 90} group="right_leg" info="leg fwd/back" />
-            <ServoIndicator id="10" name="right_ankle_pitch" angle={angles['10'] ?? 90} group="right_leg" info="foot U/D" />
-            <ServoIndicator id="9" name="right_ankle_roll" angle={angles['9'] ?? 90} group="right_leg" info="foot tilt" />
+          <Text fontSize="sm" fontWeight="bold" color="orange.300" mb={2}>Right Leg</Text>
+          <VStack spacing={2} align="stretch">
+            <ServoIndicator id="13" name="right_hip_side" angle={angles['13'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('13')} onToggle={toggleServo} />
+            <ServoIndicator id="12" name="right_hip_up" angle={angles['12'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('12')} onToggle={toggleServo} />
+            <ServoIndicator id="11" name="right_knee_up" angle={angles['11'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('11')} onToggle={toggleServo} />
+            <ServoIndicator id="10" name="right_ankle_up" angle={angles['10'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('10')} onToggle={toggleServo} />
+            <ServoIndicator id="9" name="right_ankle_side" angle={angles['9'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('9')} onToggle={toggleServo} />
           </VStack>
         </GridItem>
       </Grid>
