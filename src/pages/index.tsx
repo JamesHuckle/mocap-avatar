@@ -12,28 +12,51 @@ const KalidoCanvas = dynamic(() => import('../components/KalidoCanvas'), {ssr: f
 export default function Home() {
   const [currentVrm, setCurrentVrm] = useState(null);
   const [progress, setProgress] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [vrmUrl, setVrmUrl] = useState<string>(
+    'https://cdn.glitch.com/29e07830-2317-4b15-a044-135e73c7f840%2FAshtra.vrm?v=1630342336981',
+  );
 
   useEffect(() => {
     /* VRM CHARACTER SETUP */
-    // Import Character VRM
+    let objectUrlToRevoke: string | null = null;
+
     const loader = new GLTFLoader();
     loader.crossOrigin = 'anonymous';
-    // install plugin
-    loader.register(parser => {
-      return new VRMLoaderPlugin(parser);
-    });
-    // Import model from URL, add your own model here
-    loader.load(
-      'https://cdn.glitch.com/29e07830-2317-4b15-a044-135e73c7f840%2FAshtra.vrm?v=1630342336981',
-      gltf => {
-        VRMUtils.removeUnnecessaryJoints(gltf.scene);
-        const vrm = gltf.userData.vrm;
-        setCurrentVrm(vrm);
-      },
-      progress => setProgress(Math.round(100.0 * (progress.loaded / progress.total))),
-      error => console.error(error),
-    );
-  }, []);
+    loader.register(parser => new VRMLoaderPlugin(parser));
+
+    const loadFromUrl = (url: string) => {
+      setLoadError(null);
+      setProgress(0);
+
+      loader.load(
+        url,
+        gltf => {
+          VRMUtils.removeUnnecessaryJoints(gltf.scene);
+          const vrm = gltf.userData.vrm;
+          setCurrentVrm(vrm);
+        },
+        evt => {
+          // Some servers don't send Content-Length, so total can be 0.
+          if (!evt.total) return;
+          setProgress(Math.round(100.0 * (evt.loaded / evt.total)));
+        },
+        err => {
+          console.error(err);
+          setLoadError(
+            'Failed to load the VRM model. If you are stuck at 0%, the default remote VRM URL may be blocked/unreachable. Try uploading a local .vrm file below.',
+          );
+        },
+      );
+    };
+
+    // Load initial VRM
+    loadFromUrl(vrmUrl);
+
+    return () => {
+      if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
+    };
+  }, [vrmUrl]);
 
   return (
     <>
@@ -57,7 +80,14 @@ export default function Home() {
             h="100vh"
             w="100%"
           >
-            <Box boxSize={['75px', '150px']} mb="50px">
+            <Box
+              display="flex"
+              flexDirection="column"
+              alignItems="center"
+              gap="12px"
+              boxSize={['75px', '150px']}
+              mb="50px"
+            >
               <CircularProgressbar
                 value={progress}
                 text={`${progress}%`}
@@ -78,6 +108,42 @@ export default function Home() {
                   },
                 }}
               />
+              {loadError && (
+                <Box
+                  width={['280px', '420px']}
+                  bg="white"
+                  borderRadius="12px"
+                  padding="12px"
+                  color="#111827"
+                  fontSize="14px"
+                  boxShadow="md"
+                >
+                  {loadError}
+                </Box>
+              )}
+              <Box
+                width={['280px', '420px']}
+                bg="white"
+                borderRadius="12px"
+                padding="12px"
+                color="#111827"
+                fontSize="14px"
+                boxShadow="md"
+              >
+                <Box fontWeight="bold" mb="8px">
+                  Load your own VRM (local)
+                </Box>
+                <input
+                  type="file"
+                  accept=".vrm,model/gltf-binary,model/gltf+json"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const url = URL.createObjectURL(file);
+                    setVrmUrl(url);
+                  }}
+                />
+              </Box>
             </Box>
           </Box>
         ) : (
