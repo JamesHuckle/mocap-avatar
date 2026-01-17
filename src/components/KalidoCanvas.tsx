@@ -1,13 +1,12 @@
 import {useDisclosure, Box} from '@chakra-ui/react';
-import {useState, useEffect, useRef} from 'react';
+import {useState, useEffect, useRef, useCallback} from 'react';
 import * as THREE from 'three';
 import {OrbitControls} from 'three/examples/jsm/controls/OrbitControls.js';
-import {VRM, VRMExpressionPresetName, VRMHumanBoneName, VRMUtils} from '@pixiv/three-vrm';
+import {VRM, VRMHumanBoneName, VRMUtils} from '@pixiv/three-vrm';
 import * as Kalidokit from 'kalidokit';
 import {
   FilesetResolver,
   PoseLandmarker,
-  FaceLandmarker,
   HandLandmarker,
   DrawingUtils,
   NormalizedLandmark,
@@ -16,22 +15,23 @@ import {useDrag} from '@use-gesture/react';
 import {useSpring, animated} from '@react-spring/web';
 import ToggleButton from './ToggleButton';
 import InfoModal from './InfoModal';
+import ServoMapping from './ServoMapping';
 
-interface HolisticResults {
+export interface HolisticResults {
   poseLandmarks?: NormalizedLandmark[];
-  faceLandmarks?: NormalizedLandmark[];
   leftHandLandmarks?: NormalizedLandmark[];
   rightHandLandmarks?: NormalizedLandmark[];
   poseWorldLandmarks?: NormalizedLandmark[];
 }
 
-// Import Helper Functions from Kalidokit
-const clamp = Kalidokit.Utils.clamp;
-const lerp = Kalidokit.Vector.lerp;
-
 export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
   const [cameraIsOn, setCameraIsOn] = useState(false);
   const [isDayTheme, setisDayTheme] = useState(true);
+  const [showServoPanel, setShowServoPanel] = useState(true);
+  const [poseData, setPoseData] = useState<{
+    poseLandmarks?: NormalizedLandmark[];
+    worldLandmarks?: NormalizedLandmark[];
+  }>({});
   const infoModal = useDisclosure();
   const avatarBgImage = isDayTheme ? '/green-grass-field.jpg' : '/galaxy.jpg';
   const avatarBgImageButton = isDayTheme ? '/galaxy.jpg' : '/green-grass-field.jpg';
@@ -40,7 +40,6 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
 
   // Refs for MediaPipe landmarkers
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
-  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -71,7 +70,7 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
 
       if (!isMounted) return;
 
-      const [pose, face, hands] = await Promise.all([
+      const [pose, hands] = await Promise.all([
         PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: '/models/pose_landmarker_full.task',
@@ -79,15 +78,6 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
           },
           runningMode: 'VIDEO',
           numPoses: 1,
-        }),
-        FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: '/models/face_landmarker.task',
-            delegate: 'GPU',
-          },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          outputFaceBlendshapes: true,
         }),
         HandLandmarker.createFromOptions(vision, {
           baseOptions: {
@@ -101,13 +91,11 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
 
       if (!isMounted) {
         pose.close();
-        face.close();
         hands.close();
         return;
       }
 
       poseLandmarkerRef.current = pose;
-      faceLandmarkerRef.current = face;
       handLandmarkerRef.current = hands;
     }
 
@@ -116,7 +104,6 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
     return () => {
       isMounted = false;
       poseLandmarkerRef.current?.close();
-      faceLandmarkerRef.current?.close();
       handLandmarkerRef.current?.close();
     };
   }, []);
@@ -201,81 +188,16 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
       Part.position.lerp(vector, lerpAmount);
     };
 
-    let oldLookTarget = new THREE.Euler();
-    const rigFace = (riggedFace: Kalidokit.TFace) => {
-      rigRotation('neck', riggedFace.head, 0.7);
-
-      const Blendshape = currentVrm.expressionManager;
-      if (!Blendshape) return;
-      
-      const PresetName = VRMExpressionPresetName;
-
-      riggedFace.eye.l = lerp(
-        clamp(1 - riggedFace.eye.l, 0, 1),
-        Blendshape.getValue(PresetName.Blink) ?? 0,
-        0.5,
-      ) as number;
-      riggedFace.eye.r = lerp(
-        clamp(1 - riggedFace.eye.r, 0, 1),
-        Blendshape.getValue(PresetName.Blink) ?? 0,
-        0.5,
-      ) as number;
-      riggedFace.eye = Kalidokit.Face.stabilizeBlink(riggedFace.eye, riggedFace.head.y);
-      Blendshape.setValue(PresetName.Blink, riggedFace.eye.l);
-
-      Blendshape.setValue(
-        PresetName.Ih,
-        lerp(riggedFace.mouth.shape.I, Blendshape.getValue(PresetName.Ih) ?? 0, 0.5) as number,
-      );
-      Blendshape.setValue(
-        PresetName.Aa,
-        lerp(riggedFace.mouth.shape.A, Blendshape.getValue(PresetName.Aa) ?? 0, 0.5) as number,
-      );
-      Blendshape.setValue(
-        PresetName.Ee,
-        lerp(riggedFace.mouth.shape.E, Blendshape.getValue(PresetName.Ee) ?? 0, 0.5) as number,
-      );
-      Blendshape.setValue(
-        PresetName.Oh,
-        lerp(riggedFace.mouth.shape.O, Blendshape.getValue(PresetName.Oh) ?? 0, 0.5) as number,
-      );
-      Blendshape.setValue(
-        PresetName.Ou,
-        lerp(riggedFace.mouth.shape.U, Blendshape.getValue(PresetName.Ou) ?? 0, 0.5) as number,
-      );
-
-      const lookTarget = new THREE.Euler(
-        lerp(oldLookTarget.x, riggedFace.pupil.y, 0.4) as number,
-        lerp(oldLookTarget.y, riggedFace.pupil.x, 0.4) as number,
-        0,
-        'XYZ',
-      );
-      oldLookTarget.copy(lookTarget);
-      currentVrm.lookAt?.applier?.lookAt(lookTarget);
-    };
-
     /* VRM Character Animator */
     const animateVRM = (vrm: VRM, results: HolisticResults) => {
       if (!vrm) return;
 
-      let riggedPose, riggedLeftHand, riggedRightHand, riggedFace;
-      const faceLandmarks = results.faceLandmarks;
+      let riggedPose, riggedLeftHand, riggedRightHand;
       const pose3DLandmarks = results.poseWorldLandmarks;
       const pose2DLandmarks = results.poseLandmarks;
       // Note: hands may be swapped depending on camera mirroring
       const leftHandLandmarks = results.rightHandLandmarks;
       const rightHandLandmarks = results.leftHandLandmarks;
-
-      // Animate Face
-      if (faceLandmarks) {
-        riggedFace = Kalidokit.Face.solve(faceLandmarks, {
-          runtime: 'mediapipe',
-          video: videoRef.current,
-        });
-        if (riggedFace) {
-          rigFace(riggedFace);
-        }
-      }
 
       // Animate Pose
       if (pose2DLandmarks && pose3DLandmarks) {
@@ -389,21 +311,6 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
         });
       }
 
-      // Draw face landmarks
-      if (results.faceLandmarks) {
-        drawingUtils.drawConnectors(results.faceLandmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, {
-          color: '#C0C0C070',
-          lineWidth: 1,
-        });
-        // Draw pupils if available
-        if (results.faceLandmarks.length >= 478) {
-          drawingUtils.drawLandmarks(
-            [results.faceLandmarks[468], results.faceLandmarks[473]],
-            {color: '#ffe603', lineWidth: 2}
-          );
-        }
-      }
-
       // Draw hand landmarks
       if (results.leftHandLandmarks) {
         drawingUtils.drawConnectors(results.leftHandLandmarks, HandLandmarker.HAND_CONNECTIONS, {
@@ -445,17 +352,15 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
       lastTimestampRef.current = timestamp;
 
       const poseLandmarker = poseLandmarkerRef.current;
-      const faceLandmarker = faceLandmarkerRef.current;
       const handLandmarker = handLandmarkerRef.current;
 
-      if (!poseLandmarker || !faceLandmarker || !handLandmarker) {
+      if (!poseLandmarker || !handLandmarker) {
         animationFrameRef.current = requestAnimationFrame(detectAndAnimate);
         return;
       }
 
-      // Run all detections
+      // Run detections
       const poseResult = poseLandmarker.detectForVideo(videoElement, timestamp);
-      const faceResult = faceLandmarker.detectForVideo(videoElement, timestamp);
       const handResult = handLandmarker.detectForVideo(videoElement, timestamp);
 
       // Normalize results to match legacy format for Kalidokit
@@ -475,10 +380,15 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
       const results: HolisticResults = {
         poseLandmarks: poseResult.landmarks[0],
         poseWorldLandmarks: poseResult.worldLandmarks[0],
-        faceLandmarks: faceResult.faceLandmarks[0],
         leftHandLandmarks,
         rightHandLandmarks,
       };
+
+      // Update servo mapping data
+      setPoseData({
+        poseLandmarks: poseResult.landmarks[0],
+        worldLandmarks: poseResult.worldLandmarks[0],
+      });
 
       drawResults(results);
       animateVRM(currentVrm, results);
@@ -582,17 +492,46 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
         />
         <ToggleButton
           onClickButton={() => setisDayTheme(prev => !prev)}
-          buttonRightPosition="208px"
+          buttonRightPosition="288px"
           bgImageSrc=""
           bgImageUrl={avatarBgImageButton}
         />
         <ToggleButton
           onClickButton={() => setCameraIsOn(prev => !prev)}
-          buttonRightPosition="128px"
+          buttonRightPosition="208px"
           bgImageSrc={cameraBgImageButton}
           bgImageUrl=""
         />
+        <ToggleButton
+          onClickButton={() => setShowServoPanel(prev => !prev)}
+          buttonRightPosition="128px"
+          bgImageSrc="/robot.svg"
+          bgImageUrl=""
+        />
         <canvas id="myAvatar" />
+
+        {/* Servo Mapping Panel */}
+        {showServoPanel && (
+          <Box
+            position="absolute"
+            top="16px"
+            right="16px"
+            width="320px"
+            maxH="calc(100vh - 32px)"
+            overflowY="auto"
+            zIndex="100"
+            css={{
+              '&::-webkit-scrollbar': {width: '6px'},
+              '&::-webkit-scrollbar-track': {background: 'transparent'},
+              '&::-webkit-scrollbar-thumb': {background: '#4a5568', borderRadius: '3px'},
+            }}
+          >
+            <ServoMapping
+              poseLandmarks={poseData.poseLandmarks}
+              worldLandmarks={poseData.worldLandmarks}
+            />
+          </Box>
+        )}
       </Box>
       <InfoModal useDisclosureFn={infoModal} />
     </>
