@@ -2,8 +2,8 @@ import {useState, useRef, useCallback, useEffect} from 'react';
 import {ServoAngles} from '../components/ServoMapping';
 
 // Default pulse limits
-export const DEFAULT_MIN_PULSE = 200;
-export const DEFAULT_MAX_PULSE = 800;
+export const DEFAULT_MIN_PULSE = 0;
+export const DEFAULT_MAX_PULSE = 1000;
 
 // All servo IDs (1-16)
 export const ALL_SERVOS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'];
@@ -14,9 +14,9 @@ export const DEFAULT_ENABLED_SERVOS = new Set([
   '15', '16', // Right shoulder
 ]);
 
-// Convert degrees (0-180) to pulse with configurable limits
+// Convert degrees to pulse with configurable limits (legacy path; not used when sending pulses directly)
 export function degreesToPulse(degrees: number, minPulse: number, maxPulse: number): number {
-  const normalized = Math.max(0, Math.min(180, degrees)) / 180;
+  const normalized = degrees / 180;
   return Math.round(minPulse + normalized * (maxPulse - minPulse));
 }
 
@@ -28,8 +28,6 @@ export interface ServoConnectionState {
 }
 
 export interface ServoConnectionConfig {
-  minPulse: number;
-  maxPulse: number;
   enabledServos: Set<string>;
 }
 
@@ -102,16 +100,35 @@ export function useServoConnection(robotUrl: string, config: ServoConnectionConf
   const sendServos = useCallback((angles: ServoAngles) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-    const {enabledServos, minPulse, maxPulse} = configRef.current;
+    const {enabledServos} = configRef.current;
     
     // Convert only enabled servo angles to pulses
     const servos: Record<string, number> = {};
     for (const [id, degrees] of Object.entries(angles)) {
       if (enabledServos.has(id) && typeof degrees === 'number' && !isNaN(degrees)) {
-        servos[id] = degreesToPulse(degrees, minPulse, maxPulse);
+        // Legacy: interpret incoming values as *degrees* and map into full 0..1000
+        servos[id] = degreesToPulse(degrees, DEFAULT_MIN_PULSE, DEFAULT_MAX_PULSE);
       }
     }
 
+    if (Object.keys(servos).length === 0) return;
+
+    const message = JSON.stringify({type: 'servos', servos});
+    wsRef.current.send(message);
+    setState(s => ({...s, lastSentAt: Date.now()}));
+  }, []);
+
+  // Preferred: send pulses (0..1000) directly
+  const sendPulses = useCallback((pulses: Record<string, number>) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const {enabledServos} = configRef.current;
+
+    const servos: Record<string, number> = {};
+    for (const [id, pulse] of Object.entries(pulses)) {
+      if (enabledServos.has(id) && typeof pulse === 'number' && !isNaN(pulse)) {
+        servos[id] = Math.round(pulse);
+      }
+    }
     if (Object.keys(servos).length === 0) return;
 
     const message = JSON.stringify({type: 'servos', servos});
@@ -142,6 +159,7 @@ export function useServoConnection(robotUrl: string, config: ServoConnectionConf
     connect,
     disconnect,
     sendServos,
+    sendPulses,
     ping,
     reset,
   };

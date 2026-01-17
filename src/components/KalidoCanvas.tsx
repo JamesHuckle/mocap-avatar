@@ -516,7 +516,7 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
             position="absolute"
             top="16px"
             right="16px"
-            width="320px"
+            width="520px"
             maxH="calc(100vh - 32px)"
             overflowY="auto"
             zIndex="100"

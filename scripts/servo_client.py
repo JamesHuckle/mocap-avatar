@@ -4,7 +4,7 @@ Servo Client - Interactive CLI to control TonyPi servos.
 Connects to servo_receiver.py and sends servo commands.
 
 Usage:
-    python3 servo_client.py --robot ws://192.168.0.104:8766
+    uv run python3 scripts/servo_client.py --robot ws://192.168.0.104:8766
 
 Servo Mappings:
     1: left_ankle_side      9: right_ankle_side

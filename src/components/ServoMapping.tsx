@@ -1,7 +1,74 @@
-import {Box, Text, VStack, HStack, Grid, GridItem, Input, Button, Badge, Slider, SliderTrack, SliderFilledTrack, SliderThumb, Switch} from '@chakra-ui/react';
+import {Box, Text, VStack, HStack, Grid, GridItem, Input, Button, Badge, Switch, Collapse, useToast, Tooltip, NumberInput, NumberInputField, NumberInputStepper, NumberIncrementStepper, NumberDecrementStepper} from '@chakra-ui/react';
 import {NormalizedLandmark} from '@mediapipe/tasks-vision';
-import {useState, useEffect, useRef} from 'react';
-import {useServoConnection, ALL_SERVOS, DEFAULT_ENABLED_SERVOS, DEFAULT_MIN_PULSE, DEFAULT_MAX_PULSE} from '../hooks/useServoConnection';
+import {useState, useEffect, useRef, useCallback} from 'react';
+import {useServoConnection, ALL_SERVOS, DEFAULT_ENABLED_SERVOS} from '../hooks/useServoConnection';
+import {DEFAULT_SERVO_CALIBRATIONS} from '../config/servoCalibrationDefaults';
+
+// Calibration settings per servo
+export interface ServoCalibration {
+  // Input range calibration (raw mocap angles). When set, we scale rawAngle from inputMin..inputMax
+  // into the full servo pulse range (0..1000).
+  inputMin?: number;
+  inputMax?: number;
+  invert: boolean;   // Invert the direction
+}
+
+// Full calibration config for export/import
+export interface CalibrationConfig {
+  version: number;
+  servos: Record<string, ServoCalibration>;
+  enabledServos: string[];
+}
+
+const DEFAULT_CALIBRATION: ServoCalibration = {
+  invert: false,
+};
+
+const CALIBRATION_STORAGE_KEY = 'tonypi-servo-calibration';
+
+// Load calibration from localStorage
+function loadCalibration(): Record<string, ServoCalibration> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const stored = localStorage.getItem(CALIBRATION_STORAGE_KEY);
+    if (stored) {
+      const config: CalibrationConfig = JSON.parse(stored);
+      return config.servos || {};
+    }
+  } catch (e) {
+    console.error('Failed to load calibration:', e);
+  }
+  return {};
+}
+
+// Save calibration to localStorage
+function saveCalibration(config: CalibrationConfig) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(CALIBRATION_STORAGE_KEY, JSON.stringify(config));
+  } catch (e) {
+    console.error('Failed to save calibration:', e);
+  }
+}
+
+// Map raw mocap angle directly into servo pulse space (0..1000).
+// No hard clamps: if you move beyond captured extremes, pulses can go <0 or >1000.
+function mapRawToPulse(rawAngle: number, cal: ServoCalibration): number {
+  const hasInputRange =
+    typeof cal.inputMin === 'number' &&
+    typeof cal.inputMax === 'number' &&
+    isFinite(cal.inputMin) &&
+    isFinite(cal.inputMax) &&
+    cal.inputMax !== cal.inputMin;
+
+  if (!hasInputRange) return 500; // neutral until you capture extremes
+
+  const inMin = cal.inputMin as number;
+  const inMax = cal.inputMax as number;
+  const t0 = (rawAngle - inMin) / (inMax - inMin);
+  const t = cal.invert ? 1 - t0 : t0;
+  return Math.round(t * 1000);
+}
 
 // TonyPi Servo Configuration - Updated mappings
 export const SERVO_CONFIG: Record<string, {name: string; group: string}> = {
@@ -203,16 +270,21 @@ export function calculateServoAngles(
   return angles;
 }
 
-// Servo indicator component with enable toggle
-function ServoIndicator({id, name, angle, group, streaming, enabled, onToggle}: {
+// Servo indicator component with enable toggle and calibration
+function ServoIndicator({id, name, rawAngle, calibratedAngle, group, streaming, enabled, onToggle, calibration, onCalibrationChange}: {
   id: string; 
   name: string; 
-  angle: number; 
+  rawAngle: number;
+  calibratedAngle: number; // now represents pulse
   group: string;
   streaming?: boolean;
   enabled: boolean;
   onToggle: (id: string) => void;
+  calibration: ServoCalibration;
+  onCalibrationChange: (id: string, cal: ServoCalibration) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  
   const groupColors: Record<string, string> = {
     left_arm: '#3b82f6',
     right_arm: '#ef4444',
@@ -221,47 +293,170 @@ function ServoIndicator({id, name, angle, group, streaming, enabled, onToggle}: 
   };
 
   const color = enabled ? (groupColors[group] || '#6b7280') : '#4a5568';
-  const displayAngle = isNaN(angle) ? 90 : Math.round(angle);
+  const displayRaw = isNaN(rawAngle) ? 90 : Math.round(rawAngle);
+  const pulseValue = isNaN(calibratedAngle) ? 500 : Math.round(calibratedAngle);
   const isStreaming = streaming && enabled;
+
+  const updateCal = (key: keyof ServoCalibration, value: number | boolean) => {
+    onCalibrationChange(id, {...calibration, [key]: value});
+  };
 
   return (
     <Box 
       bg={enabled ? "gray.800" : "gray.900"} 
       borderRadius="md" 
-      p={3} 
       borderLeft="4px solid" 
       borderLeftColor={color}
-      opacity={enabled ? 1 : 0.5}
-      cursor="pointer"
-      onClick={() => onToggle(id)}
-      _hover={{bg: enabled ? "gray.750" : "gray.850"}}
+      opacity={enabled ? 1 : 0.6}
       transition="all 0.15s"
     >
-      <HStack justify="space-between" mb={1}>
-        <HStack spacing={2}>
-          <Text fontSize="sm" color="gray.400" fontWeight="bold">{id}</Text>
-          <Switch 
-            size="sm" 
-            isChecked={enabled} 
-            onChange={() => onToggle(id)}
-            colorScheme="green"
-            onClick={(e) => e.stopPropagation()}
-          />
-          {isStreaming && <Text fontSize="10px" color="green.400">●</Text>}
+      {/* Header row - clickable to expand */}
+      <Box 
+        p={3}
+        cursor="pointer"
+        onClick={() => setExpanded(!expanded)}
+        _hover={{bg: enabled ? "gray.750" : "gray.850"}}
+      >
+        <HStack justify="space-between" mb={1}>
+          <HStack spacing={2}>
+            <Text fontSize="sm" color="gray.400" fontWeight="bold">{id}</Text>
+            <Switch 
+              size="sm" 
+              isChecked={enabled} 
+              onChange={() => onToggle(id)}
+              colorScheme="green"
+              onClick={(e) => e.stopPropagation()}
+            />
+            {isStreaming && <Text fontSize="10px" color="green.400">●</Text>}
+            <Text fontSize="10px" color="gray.500">{expanded ? '▼' : '▶'}</Text>
+          </HStack>
+          <VStack spacing={0} align="end">
+            <HStack spacing={2}>
+              <Tooltip label={`Raw mocap: ${displayRaw}°`} placement="top">
+                <Text fontSize="lg" color="white" fontWeight="bold">{pulseValue}</Text>
+              </Tooltip>
+            </HStack>
+            <Text fontSize="10px" color="gray.500" fontWeight="mono">pulse (0-1000)</Text>
+          </VStack>
         </HStack>
-        <Text fontSize="xl" color="white" fontWeight="bold">{displayAngle}°</Text>
-      </HStack>
-      <Text fontSize="sm" color="gray.300" noOfLines={1}>{name.replace(/_/g, ' ')}</Text>
-      <Box mt={2} h="8px" bg="gray.700" borderRadius="full" overflow="hidden">
-        <Box h="100%" w={`${(displayAngle / 180) * 100}%`} bg={color} transition="width 0.05s" />
+        <Text fontSize="sm" color="gray.300" noOfLines={1}>{name.replace(/_/g, ' ')}</Text>
+        
+        {/* Range bar showing pulse value (0-1000) */}
+        <Box mt={2} h="8px" bg="gray.700" borderRadius="full" overflow="hidden" position="relative">
+          {/* Center (500) marker */}
+          <Box position="absolute" left="50%" top={0} bottom={0} w="1px" bg="yellow.500" opacity={0.5} />
+          {/* Current pulse position */}
+          <Box h="100%" w={`${(pulseValue / 1000) * 100}%`} bg={color} transition="width 0.05s" />
+        </Box>
+        <HStack justify="space-between" mt={1}>
+          <Text fontSize="9px" color="gray.600">0</Text>
+          <Text fontSize="9px" color="gray.600">500</Text>
+          <Text fontSize="9px" color="gray.600">1000</Text>
+        </HStack>
       </Box>
+
+      {/* Calibration controls - expandable */}
+      <Collapse in={expanded}>
+        <Box px={3} pb={3} pt={1} bg="gray.850" borderTop="1px solid" borderTopColor="gray.700">
+          <Box mb={2} px={1}>
+            <Text fontSize="10px" color="gray.500">
+              Capture your real extremes: move to a min/max pose, then click <b>Set</b> to record the raw mocap angle.
+              When Input Min/Max are set, your motion is scaled into full 0–1000 robot pulses.
+            </Text>
+          </Box>
+
+          {/* Input (mocap) range capture */}
+          <Grid templateColumns="1fr 1fr" gap={2} mb={3}>
+            <VStack spacing={1} align="stretch">
+              <HStack justify="space-between">
+                <Text fontSize="10px" color="cyan.300">Input Min (raw°)</Text>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  color="white"
+                  _hover={{bg: 'whiteAlpha.200'}}
+                  onClick={() => updateCal('inputMin', displayRaw)}
+                >
+                  Set
+                </Button>
+              </HStack>
+              <NumberInput
+                size="xs"
+                value={calibration.inputMin ?? ''}
+                min={0}
+                max={180}
+                onChange={(v) => {
+                  const n = Number(v);
+                  if (!isNaN(n)) updateCal('inputMin', n);
+                }}
+              >
+                <NumberInputField bg="gray.700" textAlign="center" px={1} placeholder="(unset)" />
+                <NumberInputStepper>
+                  <NumberIncrementStepper />
+                  <NumberDecrementStepper />
+                </NumberInputStepper>
+              </NumberInput>
+            </VStack>
+
+            <VStack spacing={1} align="stretch">
+              <HStack justify="space-between">
+                <Text fontSize="10px" color="cyan.300">Input Max (raw°)</Text>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  color="white"
+                  _hover={{bg: 'whiteAlpha.200'}}
+                  onClick={() => updateCal('inputMax', displayRaw)}
+                >
+                  Set
+                </Button>
+              </HStack>
+              <NumberInput
+                size="xs"
+                value={calibration.inputMax ?? ''}
+                min={0}
+                max={180}
+                onChange={(v) => {
+                  const n = Number(v);
+                  if (!isNaN(n)) updateCal('inputMax', n);
+                }}
+              >
+                <NumberInputField bg="gray.700" textAlign="center" px={1} placeholder="(unset)" />
+                <NumberInputStepper>
+                  <NumberIncrementStepper />
+                  <NumberDecrementStepper />
+                </NumberInputStepper>
+              </NumberInput>
+            </VStack>
+          </Grid>
+
+          <HStack justify="space-between">
+            <HStack spacing={2}>
+              <Text fontSize="xs" color="gray.400">Invert</Text>
+              <Switch 
+                size="sm" 
+                isChecked={calibration.invert} 
+                onChange={(e) => updateCal('invert', e.target.checked)}
+                colorScheme="purple"
+              />
+            </HStack>
+            <Button 
+              size="xs" 
+              variant="ghost" 
+              onClick={() => onCalibrationChange(id, {...DEFAULT_CALIBRATION})}
+            >
+              Reset
+            </Button>
+          </HStack>
+        </Box>
+      </Collapse>
     </Box>
   );
 }
 
 // Stick figure using MediaPipe positions
 function StickFigure({landmarks}: {landmarks?: NormalizedLandmark[]}) {
-  const W = 220, H = 280, M = 15;
+  const W = 280, H = 320, M = 20;
   
   const toSVG = (lm: NormalizedLandmark | undefined, dx: number, dy: number) => {
     if (!lm) return {x: dx, y: dy};
@@ -351,12 +546,113 @@ export default function ServoMapping({
   poseLandmarks?: NormalizedLandmark[];
   worldLandmarks?: NormalizedLandmark[];
 }) {
+  const toast = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [robotUrl, setRobotUrl] = useState('ws://192.168.0.104:8766');
   const [streaming, setStreaming] = useState(false);
-  const [minPulse, setMinPulse] = useState(DEFAULT_MIN_PULSE);
-  const [maxPulse, setMaxPulse] = useState(DEFAULT_MAX_PULSE);
   const [enabledServos, setEnabledServos] = useState<Set<string>>(() => new Set(DEFAULT_ENABLED_SERVOS));
+  const [calibrations, setCalibrations] = useState<Record<string, ServoCalibration>>(() => ({
+    ...DEFAULT_SERVO_CALIBRATIONS,
+    ...loadCalibration(),
+  }));
   const lastSendRef = useRef<number>(0);
+
+  // Get calibration for a servo (with defaults)
+  const getCalibration = useCallback((id: string): ServoCalibration => {
+    return calibrations[id] || {...DEFAULT_CALIBRATION};
+  }, [calibrations]);
+
+  // Update calibration for a servo
+  const updateCalibration = useCallback((id: string, cal: ServoCalibration) => {
+    setCalibrations(prev => {
+      const next = {...prev, [id]: cal};
+      // Auto-save to localStorage
+      saveCalibration({
+        version: 1,
+        servos: next,
+        enabledServos: Array.from(enabledServos),
+      });
+      return next;
+    });
+  }, [enabledServos]);
+
+  // Export calibration to JSON file
+  const exportCalibration = useCallback(() => {
+    const config = {
+      _comment:
+        'TonyPi Servo Calibration - inputMin/inputMax: capture raw mocap extremes (scales motion into full 0..1000 pulses). invert: flip direction.',
+      version: 1,
+      servos: calibrations,
+      enabledServos: Array.from(enabledServos),
+    };
+    
+    const blob = new Blob([JSON.stringify(config, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tonypi-calibration-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    toast({
+      title: 'Calibration exported',
+      status: 'success',
+      duration: 2000,
+    });
+  }, [calibrations, enabledServos, toast]);
+
+  // Import calibration from JSON file
+  const importCalibration = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const config: CalibrationConfig = JSON.parse(e.target?.result as string);
+        
+        if (config.servos) setCalibrations(config.servos);
+        if (config.enabledServos) setEnabledServos(new Set(config.enabledServos));
+        
+        // Save to localStorage
+        saveCalibration(config);
+        
+        toast({
+          title: 'Calibration imported',
+          description: `Loaded ${Object.keys(config.servos || {}).length} servo configs`,
+          status: 'success',
+          duration: 3000,
+        });
+      } catch (err) {
+        toast({
+          title: 'Import failed',
+          description: 'Invalid calibration file',
+          status: 'error',
+          duration: 3000,
+        });
+      }
+    };
+    reader.readAsText(file);
+    
+    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [toast]);
+
+  // Reset all calibrations to default
+  const resetAllCalibrations = useCallback(() => {
+    setCalibrations({...DEFAULT_SERVO_CALIBRATIONS});
+    // Keep localStorage consistent with defaults (so refresh behaves the same)
+    saveCalibration({
+      version: 1,
+      servos: {...DEFAULT_SERVO_CALIBRATIONS},
+      enabledServos: Array.from(enabledServos),
+    });
+    toast({
+      title: 'Calibrations reset',
+      status: 'info',
+      duration: 2000,
+    });
+  }, [toast, enabledServos]);
 
   const toggleServo = (id: string) => {
     setEnabledServos(prev => {
@@ -394,8 +690,18 @@ export default function ServoMapping({
   const disableAll = () => setEnabledServos(new Set());
   const resetToDefault = () => setEnabledServos(new Set(DEFAULT_ENABLED_SERVOS));
 
-  const servo = useServoConnection(robotUrl, {minPulse, maxPulse, enabledServos});
-  const angles = poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {};
+  const servo = useServoConnection(robotUrl, {enabledServos});
+  
+  // Calculate raw angles from pose
+  const rawAngles = poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {};
+  
+  // Apply calibration to get output pulses
+  const calibratedAngles: ServoAngles = {};
+  for (const id of ALL_SERVOS) {
+    const raw = rawAngles[id] ?? 90;
+    const cal = getCalibration(id);
+    calibratedAngles[id] = mapRawToPulse(raw, cal);
+  }
 
   // Stream servo data when enabled
   useEffect(() => {
@@ -403,10 +709,10 @@ export default function ServoMapping({
 
     const now = Date.now();
     if (now - lastSendRef.current >= SEND_INTERVAL_MS) {
-      servo.sendServos(angles);
+      servo.sendPulses(calibratedAngles);
       lastSendRef.current = now;
     }
-  }, [streaming, servo.connected, poseLandmarks, angles, servo]);
+  }, [streaming, servo.connected, poseLandmarks, calibratedAngles, servo]);
 
   const handleConnect = () => {
     if (servo.connected) {
@@ -420,7 +726,7 @@ export default function ServoMapping({
   const enabledCount = enabledServos.size;
 
   return (
-    <Box bg="gray.900" borderRadius="xl" p={4} color="white" maxH="100vh" overflowY="auto" minW="420px">
+    <Box bg="gray.900" borderRadius="xl" p={5} color="white" maxH="100vh" overflowY="auto" minW="500px">
       <Text fontSize="xl" fontWeight="bold" mb={3} textAlign="center">TonyPi Servo Control</Text>
 
       {/* Connection Controls */}
@@ -477,43 +783,38 @@ export default function ServoMapping({
           )}
         </HStack>
 
-        {/* Pulse Limits */}
-        <Box bg="gray.750" borderRadius="md" p={3} mb={3}>
-          <Text fontSize="sm" fontWeight="bold" mb={2}>Pulse Limits</Text>
-          <HStack spacing={4}>
-            <VStack flex={1} align="stretch" spacing={1}>
-              <HStack justify="space-between">
-                <Text fontSize="xs" color="gray.400">Min</Text>
-                <Text fontSize="sm" fontWeight="bold">{minPulse}</Text>
-              </HStack>
-              <Slider value={minPulse} min={0} max={500} onChange={setMinPulse}>
-                <SliderTrack bg="gray.600"><SliderFilledTrack bg="blue.400" /></SliderTrack>
-                <SliderThumb />
-              </Slider>
-            </VStack>
-            <VStack flex={1} align="stretch" spacing={1}>
-              <HStack justify="space-between">
-                <Text fontSize="xs" color="gray.400">Max</Text>
-                <Text fontSize="sm" fontWeight="bold">{maxPulse}</Text>
-              </HStack>
-              <Slider value={maxPulse} min={500} max={1000} onChange={setMaxPulse}>
-                <SliderTrack bg="gray.600"><SliderFilledTrack bg="blue.400" /></SliderTrack>
-                <SliderThumb />
-              </Slider>
-            </VStack>
-          </HStack>
-        </Box>
+        {/* Pulse Limits removed for now — mapping always targets full 0..1000 */}
 
         {/* Quick Controls */}
-        <HStack justify="center" spacing={2} flexWrap="wrap">
+        <HStack justify="center" spacing={2} flexWrap="wrap" mb={2}>
           <Button size="xs" onClick={enableAll}>Enable All</Button>
           <Button size="xs" onClick={disableAll}>Disable All</Button>
           <Button size="xs" colorScheme="blue" onClick={resetToDefault}>Shoulders Only</Button>
         </HStack>
+        
+        {/* Calibration Export/Import */}
+        <HStack justify="center" spacing={2} flexWrap="wrap">
+          <Button size="xs" colorScheme="teal" onClick={exportCalibration}>
+            📤 Export Mapping
+          </Button>
+          <Button size="xs" colorScheme="purple" onClick={() => fileInputRef.current?.click()}>
+            📥 Import Mapping
+          </Button>
+          <Button size="xs" variant="ghost" color="gray.400" onClick={resetAllCalibrations}>
+            Reset All
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            style={{display: 'none'}}
+            onChange={importCalibration}
+          />
+        </HStack>
 
         {streaming && (
           <Text fontSize="sm" color="orange.300" mt={2} textAlign="center">
-            ⚠️ {enabledCount} servos active • {Math.round(1000 / SEND_INTERVAL_MS)}Hz • Pulse {minPulse}-{maxPulse}
+            ⚠️ {enabledCount} servos active • {Math.round(1000 / SEND_INTERVAL_MS)}Hz • Pulse 0-1000
           </Text>
         )}
       </Box>
@@ -552,40 +853,40 @@ export default function ServoMapping({
         <GridItem>
           <Text fontSize="sm" fontWeight="bold" color="blue.300" mb={2}>Left Arm</Text>
           <VStack spacing={2} align="stretch">
-            <ServoIndicator id="8" name="left_shoulder_rotate" angle={angles['8'] ?? 90} group="left_arm" streaming={streaming} enabled={enabledServos.has('8')} onToggle={toggleServo} />
-            <ServoIndicator id="7" name="left_shoulder_side" angle={angles['7'] ?? 90} group="left_arm" streaming={streaming} enabled={enabledServos.has('7')} onToggle={toggleServo} />
-            <ServoIndicator id="6" name="left_elbow_up" angle={angles['6'] ?? 90} group="left_arm" streaming={streaming} enabled={enabledServos.has('6')} onToggle={toggleServo} />
+            <ServoIndicator id="8" name="left_shoulder_rotate" rawAngle={rawAngles['8'] ?? 90} calibratedAngle={calibratedAngles['8']} group="left_arm" streaming={streaming} enabled={enabledServos.has('8')} onToggle={toggleServo} calibration={getCalibration('8')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="7" name="left_shoulder_side" rawAngle={rawAngles['7'] ?? 90} calibratedAngle={calibratedAngles['7']} group="left_arm" streaming={streaming} enabled={enabledServos.has('7')} onToggle={toggleServo} calibration={getCalibration('7')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="6" name="left_elbow_up" rawAngle={rawAngles['6'] ?? 90} calibratedAngle={calibratedAngles['6']} group="left_arm" streaming={streaming} enabled={enabledServos.has('6')} onToggle={toggleServo} calibration={getCalibration('6')} onCalibrationChange={updateCalibration} />
           </VStack>
         </GridItem>
 
         <GridItem>
           <Text fontSize="sm" fontWeight="bold" color="red.300" mb={2}>Right Arm</Text>
           <VStack spacing={2} align="stretch">
-            <ServoIndicator id="16" name="right_shoulder_rotate" angle={angles['16'] ?? 90} group="right_arm" streaming={streaming} enabled={enabledServos.has('16')} onToggle={toggleServo} />
-            <ServoIndicator id="15" name="right_shoulder_side" angle={angles['15'] ?? 90} group="right_arm" streaming={streaming} enabled={enabledServos.has('15')} onToggle={toggleServo} />
-            <ServoIndicator id="14" name="right_elbow_up" angle={angles['14'] ?? 90} group="right_arm" streaming={streaming} enabled={enabledServos.has('14')} onToggle={toggleServo} />
+            <ServoIndicator id="16" name="right_shoulder_rotate" rawAngle={rawAngles['16'] ?? 90} calibratedAngle={calibratedAngles['16']} group="right_arm" streaming={streaming} enabled={enabledServos.has('16')} onToggle={toggleServo} calibration={getCalibration('16')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="15" name="right_shoulder_side" rawAngle={rawAngles['15'] ?? 90} calibratedAngle={calibratedAngles['15']} group="right_arm" streaming={streaming} enabled={enabledServos.has('15')} onToggle={toggleServo} calibration={getCalibration('15')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="14" name="right_elbow_up" rawAngle={rawAngles['14'] ?? 90} calibratedAngle={calibratedAngles['14']} group="right_arm" streaming={streaming} enabled={enabledServos.has('14')} onToggle={toggleServo} calibration={getCalibration('14')} onCalibrationChange={updateCalibration} />
           </VStack>
         </GridItem>
 
         <GridItem>
           <Text fontSize="sm" fontWeight="bold" color="green.300" mb={2}>Left Leg</Text>
           <VStack spacing={2} align="stretch">
-            <ServoIndicator id="5" name="left_hip_side" angle={angles['5'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('5')} onToggle={toggleServo} />
-            <ServoIndicator id="4" name="left_hip_up" angle={angles['4'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('4')} onToggle={toggleServo} />
-            <ServoIndicator id="3" name="left_knee_up" angle={angles['3'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('3')} onToggle={toggleServo} />
-            <ServoIndicator id="2" name="left_ankle_up" angle={angles['2'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('2')} onToggle={toggleServo} />
-            <ServoIndicator id="1" name="left_ankle_side" angle={angles['1'] ?? 90} group="left_leg" streaming={streaming} enabled={enabledServos.has('1')} onToggle={toggleServo} />
+            <ServoIndicator id="5" name="left_hip_side" rawAngle={rawAngles['5'] ?? 90} calibratedAngle={calibratedAngles['5']} group="left_leg" streaming={streaming} enabled={enabledServos.has('5')} onToggle={toggleServo} calibration={getCalibration('5')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="4" name="left_hip_up" rawAngle={rawAngles['4'] ?? 90} calibratedAngle={calibratedAngles['4']} group="left_leg" streaming={streaming} enabled={enabledServos.has('4')} onToggle={toggleServo} calibration={getCalibration('4')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="3" name="left_knee_up" rawAngle={rawAngles['3'] ?? 90} calibratedAngle={calibratedAngles['3']} group="left_leg" streaming={streaming} enabled={enabledServos.has('3')} onToggle={toggleServo} calibration={getCalibration('3')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="2" name="left_ankle_up" rawAngle={rawAngles['2'] ?? 90} calibratedAngle={calibratedAngles['2']} group="left_leg" streaming={streaming} enabled={enabledServos.has('2')} onToggle={toggleServo} calibration={getCalibration('2')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="1" name="left_ankle_side" rawAngle={rawAngles['1'] ?? 90} calibratedAngle={calibratedAngles['1']} group="left_leg" streaming={streaming} enabled={enabledServos.has('1')} onToggle={toggleServo} calibration={getCalibration('1')} onCalibrationChange={updateCalibration} />
           </VStack>
         </GridItem>
 
         <GridItem>
           <Text fontSize="sm" fontWeight="bold" color="orange.300" mb={2}>Right Leg</Text>
           <VStack spacing={2} align="stretch">
-            <ServoIndicator id="13" name="right_hip_side" angle={angles['13'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('13')} onToggle={toggleServo} />
-            <ServoIndicator id="12" name="right_hip_up" angle={angles['12'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('12')} onToggle={toggleServo} />
-            <ServoIndicator id="11" name="right_knee_up" angle={angles['11'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('11')} onToggle={toggleServo} />
-            <ServoIndicator id="10" name="right_ankle_up" angle={angles['10'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('10')} onToggle={toggleServo} />
-            <ServoIndicator id="9" name="right_ankle_side" angle={angles['9'] ?? 90} group="right_leg" streaming={streaming} enabled={enabledServos.has('9')} onToggle={toggleServo} />
+            <ServoIndicator id="13" name="right_hip_side" rawAngle={rawAngles['13'] ?? 90} calibratedAngle={calibratedAngles['13']} group="right_leg" streaming={streaming} enabled={enabledServos.has('13')} onToggle={toggleServo} calibration={getCalibration('13')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="12" name="right_hip_up" rawAngle={rawAngles['12'] ?? 90} calibratedAngle={calibratedAngles['12']} group="right_leg" streaming={streaming} enabled={enabledServos.has('12')} onToggle={toggleServo} calibration={getCalibration('12')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="11" name="right_knee_up" rawAngle={rawAngles['11'] ?? 90} calibratedAngle={calibratedAngles['11']} group="right_leg" streaming={streaming} enabled={enabledServos.has('11')} onToggle={toggleServo} calibration={getCalibration('11')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="10" name="right_ankle_up" rawAngle={rawAngles['10'] ?? 90} calibratedAngle={calibratedAngles['10']} group="right_leg" streaming={streaming} enabled={enabledServos.has('10')} onToggle={toggleServo} calibration={getCalibration('10')} onCalibrationChange={updateCalibration} />
+            <ServoIndicator id="9" name="right_ankle_side" rawAngle={rawAngles['9'] ?? 90} calibratedAngle={calibratedAngles['9']} group="right_leg" streaming={streaming} enabled={enabledServos.has('9')} onToggle={toggleServo} calibration={getCalibration('9')} onCalibrationChange={updateCalibration} />
           </VStack>
         </GridItem>
       </Grid>
