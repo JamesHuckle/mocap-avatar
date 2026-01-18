@@ -14,7 +14,8 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [vrmUrl, setVrmUrl] = useState<string>(
-    'https://cdn.glitch.com/29e07830-2317-4b15-a044-135e73c7f840%2FAshtra.vrm?v=1630342336981',
+    'https://gooogle.com'
+    // 'https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm',
   );
 
   useEffect(() => {

@@ -17,6 +17,7 @@ import ToggleButton from './ToggleButton';
 import InfoModal from './InfoModal';
 import ServoMapping from './ServoMapping';
 import AnimationPlayer from './AnimationPlayer';
+import {ServoPositions, JointPositions} from '../lib/vrmServoCalculations';
 
 export interface HolisticResults {
   poseLandmarks?: NormalizedLandmark[];
@@ -31,10 +32,23 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
   const [showServoPanel, setShowServoPanel] = useState(true);
   const [showAnimationPanel, setShowAnimationPanel] = useState(false);
   const [animationIsPlaying, setAnimationIsPlaying] = useState(false);
+  const [debugComparisonMode, setDebugComparisonMode] = useState(false);
   const [poseData, setPoseData] = useState<{
     poseLandmarks?: NormalizedLandmark[];
     worldLandmarks?: NormalizedLandmark[];
   }>({});
+  // Servo positions from animation playback (when animation is active)
+  const [animationServoPositions, setAnimationServoPositions] = useState<ServoPositions | null>(null);
+  // Joint positions from animation playback (for debug comparison)
+  const [animationJointPositions, setAnimationJointPositions] = useState<JointPositions | null>(null);
+  
+  // Callback for animation player to emit servo positions and joint positions
+  const handleAnimationServoUpdate = useCallback((positions: ServoPositions, jointPositions?: JointPositions) => {
+    setAnimationServoPositions(positions);
+    if (jointPositions) {
+      setAnimationJointPositions(jointPositions);
+    }
+  }, []);
   const infoModal = useDisclosure();
   const avatarBgImage = isDayTheme ? '/green-grass-field.jpg' : '/galaxy.jpg';
   const avatarBgImageButton = isDayTheme ? '/galaxy.jpg' : '/green-grass-field.jpg';
@@ -543,6 +557,10 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
             <ServoMapping
               poseLandmarks={poseData.poseLandmarks}
               worldLandmarks={poseData.worldLandmarks}
+              animationServoPositions={animationIsPlaying ? animationServoPositions : null}
+              debugComparisonMode={debugComparisonMode && animationIsPlaying}
+              mediapipePoseForComparison={debugComparisonMode ? poseData.poseLandmarks : undefined}
+              fbxJointPositions={debugComparisonMode && animationIsPlaying ? animationJointPositions : null}
             />
           </Box>
         )}
@@ -568,6 +586,9 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
               vrm={currentVrm}
               isActive={animationIsPlaying}
               onActiveChange={setAnimationIsPlaying}
+              onServoPositionsUpdate={handleAnimationServoUpdate}
+              debugComparisonMode={debugComparisonMode}
+              onDebugComparisonModeChange={setDebugComparisonMode}
             />
           </Box>
         )}

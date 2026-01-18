@@ -1,9 +1,56 @@
-import {Box, Text, VStack, HStack, Grid, GridItem, Input, Button, Badge, Switch, Collapse, useToast, Tooltip, NumberInput, NumberInputField, NumberInputStepper, NumberIncrementStepper, NumberDecrementStepper} from '@chakra-ui/react';
+import {Box, Text, VStack, HStack, Grid, GridItem, Input, Button, Badge, Switch, Collapse, useToast, Tooltip, NumberInput, NumberInputField, NumberInputStepper, NumberIncrementStepper, NumberDecrementStepper, keyframes} from '@chakra-ui/react';
 import {NormalizedLandmark} from '@mediapipe/tasks-vision';
-import {useState, useEffect, useRef, useCallback, useMemo} from 'react';
+import React, {useState, useEffect, useRef, useCallback, useMemo} from 'react';
 import {useServoConnection, ALL_SERVOS, DEFAULT_ENABLED_SERVOS} from '../hooks/useServoConnection';
 import {DEFAULT_SERVO_CALIBRATIONS} from '../config/servoCalibrationDefaults';
-import {TonyPiServoCalculator, ServoPositions} from '../lib/tonypiServoCalculations';
+import {TonyPiServoCalculator, ServoPositions, MP_LANDMARKS} from '../lib/tonypiServoCalculations';
+import {ServoPositions as AnimServoPositions} from '../lib/vrmServoCalculations';
+
+// Joint position type for debug comparison
+export type JointPositions = Record<string, {x: number; y: number; z: number}>;
+
+// Extract joint positions from MediaPipe landmarks for debug logging
+function extractMediaPipeJoints(landmarks: NormalizedLandmark[]): JointPositions {
+  if (!landmarks || landmarks.length < 33) return {};
+  
+  const joints: JointPositions = {};
+  
+  // Map MediaPipe landmark indices to named joints
+  const landmarkMap: Record<string, number> = {
+    leftShoulder: MP_LANDMARKS.LEFT_SHOULDER,
+    rightShoulder: MP_LANDMARKS.RIGHT_SHOULDER,
+    leftElbow: MP_LANDMARKS.LEFT_ELBOW,
+    rightElbow: MP_LANDMARKS.RIGHT_ELBOW,
+    leftWrist: MP_LANDMARKS.LEFT_WRIST,
+    rightWrist: MP_LANDMARKS.RIGHT_WRIST,
+    leftHip: MP_LANDMARKS.LEFT_HIP,
+    rightHip: MP_LANDMARKS.RIGHT_HIP,
+    leftKnee: MP_LANDMARKS.LEFT_KNEE,
+    rightKnee: MP_LANDMARKS.RIGHT_KNEE,
+    leftAnkle: MP_LANDMARKS.LEFT_ANKLE,
+    rightAnkle: MP_LANDMARKS.RIGHT_ANKLE,
+  };
+  
+  for (const [name, idx] of Object.entries(landmarkMap)) {
+    const lm = landmarks[idx];
+    if (lm) {
+      joints[name] = {
+        x: Number(lm.x.toFixed(4)),
+        y: Number(lm.y.toFixed(4)),
+        z: Number(lm.z.toFixed(4)),
+      };
+    }
+  }
+  
+  return joints;
+}
+
+// Pulsing animation for emergency stop button
+const pulseAnimation = keyframes`
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+`;
 
 // Calibration settings per servo
 export interface ServoCalibration {
@@ -337,9 +384,17 @@ const SEND_INTERVAL_MS = 50;
 export default function ServoMapping({
   poseLandmarks,
   worldLandmarks,
+  animationServoPositions,
+  debugComparisonMode = false,
+  mediapipePoseForComparison,
+  fbxJointPositions,
 }: {
   poseLandmarks?: NormalizedLandmark[];
   worldLandmarks?: NormalizedLandmark[];
+  animationServoPositions?: AnimServoPositions | null;
+  debugComparisonMode?: boolean;
+  mediapipePoseForComparison?: NormalizedLandmark[];
+  fbxJointPositions?: JointPositions | null;
 }) {
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -487,12 +542,44 @@ export default function ServoMapping({
 
   const servo = useServoConnection(robotUrl, {enabledServos});
   
+  // Emergency stop handler (also callable via keyboard)
+  const handleEmergencyStop = useCallback(() => {
+    if (servo.connected) {
+      servo.emergencyStop(() => setStreaming(false));
+    }
+  }, [servo]);
+  
+  // Keyboard shortcut for emergency stop (Escape key)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape key triggers emergency stop when connected and streaming
+      if (e.key === 'Escape' && servo.connected && streaming) {
+        e.preventDefault();
+        handleEmergencyStop();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [servo.connected, streaming, handleEmergencyStop]);
+  
+  // Determine if we're using animation data or mocap data
+  const isAnimationMode = animationServoPositions != null && Object.keys(animationServoPositions).length > 0;
+  
   // Calculate servo pulses directly using Python-matching logic
   // The new calculator outputs pulse values (125-875) directly
-  const rawAngles = useMemo(() => 
-    poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {},
-    [poseLandmarks, worldLandmarks]
-  );
+  const rawAngles = useMemo(() => {
+    // If animation is playing, use animation servo positions
+    if (isAnimationMode && animationServoPositions) {
+      const angles: ServoAngles = {};
+      for (const [id, value] of Object.entries(animationServoPositions)) {
+        angles[id] = value;
+      }
+      return angles;
+    }
+    // Otherwise use mocap pose landmarks
+    return poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {};
+  }, [poseLandmarks, worldLandmarks, animationServoPositions, isAnimationMode]);
   
   // The calculator outputs pulse values directly, no calibration needed
   // Values are in range 125-875 (TonyPi safe operating range)
@@ -504,6 +591,16 @@ export default function ServoMapping({
     return angles;
   }, [rawAngles]);
 
+  // Calculate MediaPipe servo positions for debug comparison (only when debug mode is active)
+  const mediapipeServosForComparison = useMemo(() => {
+    if (!debugComparisonMode || !mediapipePoseForComparison) return null;
+    return calculateServoAngles(mediapipePoseForComparison);
+  }, [debugComparisonMode, mediapipePoseForComparison]);
+
+  // Ref for debug comparison throttling
+  const lastDebugSendRef = useRef<number>(0);
+  const DEBUG_COMPARISON_INTERVAL_MS = 500; // Send debug comparison every 500ms (2Hz) to avoid spam
+
   // Stream servo data when enabled
   useEffect(() => {
     if (!streaming || !servo.connected || !poseLandmarks) return;
@@ -514,6 +611,96 @@ export default function ServoMapping({
       lastSendRef.current = now;
     }
   }, [streaming, servo.connected, poseLandmarks, calibratedAngles, servo]);
+
+  // Extract MediaPipe joint positions for debug comparison
+  const mediapipeJointsForComparison = useMemo(() => {
+    if (!debugComparisonMode || !mediapipePoseForComparison) return null;
+    return extractMediaPipeJoints(mediapipePoseForComparison);
+  }, [debugComparisonMode, mediapipePoseForComparison]);
+
+  // Debug frame counter for console logging
+  const debugFrameRef = useRef<number>(0);
+  const debugStatusLoggedRef = useRef<boolean>(false);
+
+  // Log debug status when mode changes
+  useEffect(() => {
+    if (debugComparisonMode && !debugStatusLoggedRef.current) {
+      console.log('\n🔬 DEBUG COMPARISON MODE ENABLED');
+      console.log('━'.repeat(50));
+      console.log('Requirements:');
+      console.log('  ✓ Debug mode: ON');
+      console.log(`  ${isAnimationMode ? '✓' : '✗'} Animation playing: ${isAnimationMode ? 'YES' : 'NO - Load and play an FBX'}`);
+      console.log(`  ${mediapipeServosForComparison ? '✓' : '✗'} MediaPipe tracking: ${mediapipeServosForComparison ? 'YES' : 'NO - Turn on camera'}`);
+      console.log('━'.repeat(50));
+      if (!isAnimationMode || !mediapipeServosForComparison) {
+        console.log('⚠️  Waiting for all requirements to be met...\n');
+      }
+      debugStatusLoggedRef.current = true;
+    } else if (!debugComparisonMode) {
+      debugStatusLoggedRef.current = false;
+      debugFrameRef.current = 0;
+    }
+  }, [debugComparisonMode, isAnimationMode, mediapipeServosForComparison]);
+
+  // Send debug comparison data when debug mode is active
+  // Also logs to browser console so you can see comparison without backend
+  useEffect(() => {
+    if (!debugComparisonMode) return;
+    if (!isAnimationMode || !animationServoPositions) return;
+    if (!mediapipeServosForComparison) return;
+
+    const now = Date.now();
+    if (now - lastDebugSendRef.current >= DEBUG_COMPARISON_INTERVAL_MS) {
+      debugFrameRef.current += 1;
+      
+      // Convert animation servo positions to string keys for comparison
+      const fbxServos: Record<string, number> = {};
+      for (const [id, value] of Object.entries(animationServoPositions)) {
+        fbxServos[String(id)] = value;
+      }
+
+      const mpServos: Record<string, number> = {};
+      for (const [id, value] of Object.entries(mediapipeServosForComparison)) {
+        mpServos[String(id)] = value;
+      }
+
+      // Always log to browser console for debugging
+      console.log(`\n${'═'.repeat(80)}`);
+      console.log(`[DEBUG FRAME ${debugFrameRef.current.toString().padStart(4, '0')}] FBX vs MediaPipe Comparison`);
+      console.log(`${'═'.repeat(80)}`);
+      
+      // Log servo comparison
+      console.log('\n🤖 SERVO POSITIONS:');
+      console.log('ID    Name                    FBX     MediaPipe   Diff');
+      console.log('─'.repeat(60));
+      for (const id of ['6', '7', '8', '14', '15', '16']) {
+        const name = SERVO_CONFIG[id]?.name || 'unknown';
+        const fbx = fbxServos[id] ?? '-';
+        const mp = mpServos[id] ?? '-';
+        const diff = typeof fbx === 'number' && typeof mp === 'number' ? fbx - mp : '-';
+        const diffStr = typeof diff === 'number' ? (diff >= 0 ? `+${diff}` : `${diff}`) : diff;
+        console.log(`${id.padEnd(6)}${name.padEnd(24)}${String(Math.round(fbx as number)).padEnd(8)}${String(Math.round(mp as number)).padEnd(12)}${diffStr}`);
+      }
+
+      // Log joint positions if available
+      if (fbxJointPositions || mediapipeJointsForComparison) {
+        console.log('\n📍 JOINT POSITIONS:');
+        console.log('Joint               FBX (x,y,z)                    MediaPipe (x,y,z)');
+        console.log('─'.repeat(75));
+        const joints = ['leftShoulder', 'leftElbow', 'rightShoulder', 'rightElbow'];
+        for (const joint of joints) {
+          const fbxPos = fbxJointPositions?.[joint];
+          const mpPos = mediapipeJointsForComparison?.[joint];
+          const fbxStr = fbxPos ? `(${fbxPos.x.toFixed(3)}, ${fbxPos.y.toFixed(3)}, ${fbxPos.z.toFixed(3)})` : '(no data)';
+          const mpStr = mpPos ? `(${mpPos.x.toFixed(3)}, ${mpPos.y.toFixed(3)}, ${mpPos.z.toFixed(3)})` : '(no data)';
+          console.log(`${joint.padEnd(20)}${fbxStr.padEnd(31)}${mpStr}`);
+        }
+      }
+      console.log(`${'═'.repeat(80)}\n`);
+      
+      lastDebugSendRef.current = now;
+    }
+  }, [debugComparisonMode, isAnimationMode, animationServoPositions, mediapipeServosForComparison, fbxJointPositions, mediapipeJointsForComparison]);
 
   const handleConnect = () => {
     if (servo.connected) {
@@ -528,7 +715,14 @@ export default function ServoMapping({
 
   return (
     <Box bg="gray.900" borderRadius="xl" p={5} color="white" maxH="100vh" overflowY="auto" minW="500px">
-      <Text fontSize="xl" fontWeight="bold" mb={3} textAlign="center">TonyPi Servo Control</Text>
+      <HStack justify="center" spacing={2} mb={3}>
+        <Text fontSize="xl" fontWeight="bold">TonyPi Servo Control</Text>
+        {isAnimationMode && (
+          <Badge colorScheme="purple" fontSize="sm" px={2} py={1}>
+            🎬 Animation Mode
+          </Badge>
+        )}
+      </HStack>
 
       {/* Connection Controls */}
       <Box bg="gray.800" borderRadius="lg" p={3} mb={4}>
@@ -584,6 +778,33 @@ export default function ServoMapping({
           )}
         </HStack>
 
+        {/* Emergency Stop Button - Always visible when connected */}
+        {servo.connected && (
+          <Box mb={3}>
+            <Button
+              size="lg"
+              width="100%"
+              height="60px"
+              bg="red.600"
+              color="white"
+              fontWeight="bold"
+              fontSize="lg"
+              _hover={{ bg: 'red.500' }}
+              _active={{ bg: 'red.700' }}
+              animation={streaming ? `${pulseAnimation} 1.5s infinite` : undefined}
+              onClick={handleEmergencyStop}
+              borderRadius="lg"
+              border="2px solid"
+              borderColor="red.400"
+            >
+              🛑 EMERGENCY STOP
+            </Button>
+            <Text fontSize="xs" color="gray.500" textAlign="center" mt={1}>
+              Returns robot to standing position and disconnects • Press <kbd style={{background: '#4a5568', padding: '0 4px', borderRadius: '3px'}}>Esc</kbd> while streaming
+            </Text>
+          </Box>
+        )}
+
         {/* Pulse Limits removed for now — mapping always targets full 0..1000 */}
 
         {/* Quick Controls */}
@@ -619,6 +840,52 @@ export default function ServoMapping({
           </Text>
         )}
       </Box>
+
+      {/* Debug Comparison Panel */}
+      {debugComparisonMode && isAnimationMode && (
+        <Box bg="orange.900" borderRadius="lg" p={3} mb={4} border="1px solid" borderColor="orange.400">
+          <HStack mb={2}>
+            <Text fontSize="sm" fontWeight="bold" color="orange.200">🔬 Debug Comparison Active</Text>
+            <Badge colorScheme="orange" fontSize="xs">
+              {servo.connected ? 'Sending to Backend' : 'Not Connected'}
+            </Badge>
+          </HStack>
+          
+          {!mediapipeServosForComparison ? (
+            <Text fontSize="xs" color="orange.300">
+              ⚠️ Turn on camera to enable MediaPipe tracking for comparison
+            </Text>
+          ) : (
+            <Box>
+              <Text fontSize="xs" color="orange.200" mb={2}>
+                Comparing FBX Animation vs MediaPipe Tracking (2Hz to backend)
+              </Text>
+              <Grid templateColumns="repeat(3, 1fr)" gap={1} fontSize="xs">
+                <Text color="gray.400" fontWeight="bold">Servo</Text>
+                <Text color="purple.300" fontWeight="bold">FBX</Text>
+                <Text color="cyan.300" fontWeight="bold">MediaPipe</Text>
+                {['6', '7', '8', '14', '15', '16'].map(id => {
+                  const fbxVal = animationServoPositions?.[Number(id)] ?? '-';
+                  const mpVal = mediapipeServosForComparison?.[id] ?? '-';
+                  const diff = typeof fbxVal === 'number' && typeof mpVal === 'number' 
+                    ? Math.abs(fbxVal - mpVal) 
+                    : null;
+                  return (
+                    <React.Fragment key={id}>
+                      <Text color="gray.400">{id} ({SERVO_CONFIG[id]?.name.slice(0, 8)})</Text>
+                      <Text color="purple.200">{typeof fbxVal === 'number' ? Math.round(fbxVal) : fbxVal}</Text>
+                      <Text color={diff && diff > 100 ? 'red.300' : 'cyan.200'}>
+                        {typeof mpVal === 'number' ? Math.round(mpVal) : mpVal}
+                        {diff !== null && <Text as="span" color={diff > 100 ? 'red.400' : 'gray.500'}> ({diff > 0 ? `±${diff}` : '0'})</Text>}
+                      </Text>
+                    </React.Fragment>
+                  );
+                })}
+              </Grid>
+            </Box>
+          )}
+        </Box>
+      )}
 
       {/* Group Quick Toggle */}
       <HStack justify="center" spacing={3} my={3} flexWrap="wrap">

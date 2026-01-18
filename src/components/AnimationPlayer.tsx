@@ -14,6 +14,8 @@ import {
   useToast,
   Input,
   SimpleGrid,
+  Switch,
+  Tooltip,
 } from '@chakra-ui/react';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import * as THREE from 'three';
@@ -25,6 +27,12 @@ import {
   createVRMAnimationClip,
 } from '@pixiv/three-vrm-animation';
 import {PROCEDURAL_ANIMATIONS, VRMAnimationPlayer, ProceduralAnimation} from '../lib/proceduralAnimations';
+import {calculateServosFromVRM, ServoPositions, JointPositions, extractVRMJointPositions, debugAnimationFrame, setVRMServoDebug} from '../lib/vrmServoCalculations';
+
+// Expose debug function globally for console access
+if (typeof window !== 'undefined') {
+  (window as unknown as { setVRMServoDebug: typeof setVRMServoDebug }).setVRMServoDebug = setVRMServoDebug;
+}
 
 type UploadKind = 'vrma' | 'fbx';
 
@@ -52,9 +60,19 @@ interface AnimationPlayerProps {
   vrm: VRM | null;
   isActive: boolean;
   onActiveChange: (active: boolean) => void;
+  onServoPositionsUpdate?: (positions: ServoPositions, jointPositions?: JointPositions) => void;
+  debugComparisonMode?: boolean;
+  onDebugComparisonModeChange?: (enabled: boolean) => void;
 }
 
-export default function AnimationPlayer({vrm, isActive, onActiveChange}: AnimationPlayerProps) {
+export default function AnimationPlayer({
+  vrm,
+  isActive,
+  onActiveChange,
+  onServoPositionsUpdate,
+  debugComparisonMode = false,
+  onDebugComparisonModeChange,
+}: AnimationPlayerProps) {
   const toast = useToast();
 
   const presets = useMemo(
@@ -98,7 +116,17 @@ export default function AnimationPlayer({vrm, isActive, onActiveChange}: Animati
   useEffect(() => {
     if (!vrm) return;
     proceduralRef.current = new VRMAnimationPlayer(vrm);
-    proceduralRef.current.setOnUpdate((t, d) => setProgress(d > 0 ? (t / d) * 100 : 0));
+    proceduralRef.current.setOnUpdate((t, d) => {
+      setProgress(d > 0 ? (t / d) * 100 : 0);
+      // Emit servo positions during procedural animation playback
+      if (onServoPositionsUpdate) {
+        const servoPositions = calculateServosFromVRM(vrm);
+        const jointPositions = extractVRMJointPositions(vrm);
+        onServoPositionsUpdate(servoPositions, jointPositions);
+        // Debug logging (enable via setVRMServoDebug(true) in console)
+        debugAnimationFrame(vrm);
+      }
+    });
 
     mixerRef.current = new THREE.AnimationMixer(vrm.scene);
 
@@ -111,7 +139,7 @@ export default function AnimationPlayer({vrm, isActive, onActiveChange}: Animati
       proceduralRef.current?.dispose();
       proceduralRef.current = null;
     };
-  }, [vrm]);
+  }, [vrm, onServoPositionsUpdate]);
 
   // Keep VRMA action speed in sync
   useEffect(() => {
@@ -154,11 +182,20 @@ export default function AnimationPlayer({vrm, isActive, onActiveChange}: Animati
         setProgress((a.time / duration) * 100);
       }
 
+      // Emit servo positions from current VRM bone state
+      if (vrm && onServoPositionsUpdate) {
+        const servoPositions = calculateServosFromVRM(vrm);
+        const jointPositions = extractVRMJointPositions(vrm);
+        onServoPositionsUpdate(servoPositions, jointPositions);
+        // Debug logging (enable via setVRMServoDebug(true) in console)
+        debugAnimationFrame(vrm);
+      }
+
       rafRef.current = requestAnimationFrame(tick);
     };
 
     rafRef.current = requestAnimationFrame(tick);
-  }, [duration]);
+  }, [duration, vrm, onServoPositionsUpdate]);
 
   const playVrmaClip = useCallback(
     (clip: THREE.AnimationClip, name: string) => {
@@ -471,6 +508,46 @@ export default function AnimationPlayer({vrm, isActive, onActiveChange}: Animati
             {loop ? '🔁 On' : '➡️ Off'}
           </Button>
         </HStack>
+
+        {/* Debug Comparison Mode Toggle */}
+        <Box
+          bg={debugComparisonMode ? 'rgba(255, 165, 0, 0.15)' : 'rgba(255, 255, 255, 0.05)'}
+          borderRadius="md"
+          p={3}
+          border="1px solid"
+          borderColor={debugComparisonMode ? 'orange.400' : 'transparent'}
+          transition="all 0.2s"
+        >
+          <HStack justify="space-between">
+            <Tooltip
+              label="When enabled, also runs MediaPipe tracking while playing animation. Both FBX and MediaPipe servo data are sent to the backend terminal for comparison."
+              placement="top"
+              hasArrow
+            >
+              <HStack spacing={2}>
+                <Text fontSize="sm" color={debugComparisonMode ? 'orange.300' : 'gray.400'}>
+                  🔬 Debug Comparison
+                </Text>
+                {debugComparisonMode && (
+                  <Badge colorScheme="orange" fontSize="xs">
+                    ACTIVE
+                  </Badge>
+                )}
+              </HStack>
+            </Tooltip>
+            <Switch
+              size="md"
+              isChecked={debugComparisonMode}
+              onChange={(e) => onDebugComparisonModeChange?.(e.target.checked)}
+              colorScheme="orange"
+            />
+          </HStack>
+          {debugComparisonMode && (
+            <Text fontSize="xs" color="orange.200" mt={2}>
+              ⚠️ Requires camera on. MediaPipe + FBX data will be sent to backend for comparison.
+            </Text>
+          )}
+        </Box>
 
         <Collapse in={showAdvanced}>
           <VStack spacing={2} pt={3} borderTop="1px solid rgba(255,255,255,0.1)">

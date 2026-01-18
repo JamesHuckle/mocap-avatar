@@ -50,7 +50,7 @@ const InfoModal = ({useDisclosureFn}) => {
           >
             <Box mb="30px">
               {websiteTutorial.map((w, index) => (
-                <>
+                <React.Fragment key={index}>
                   <Box display="flex" gap="10px" mb="10px">
                     <Box
                       bgImage={`url(${w.imageSrcOne})`}
@@ -68,7 +68,7 @@ const InfoModal = ({useDisclosureFn}) => {
                   <Text mb="30px" fontSize="xl">
                     {w.guideline}
                   </Text>
-                </>
+                </React.Fragment>
               ))}
             </Box>
             <Image w="80%" h="auto" objectFit="cover" src="/website-logo.png" />
