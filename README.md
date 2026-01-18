@@ -44,8 +44,13 @@
 # get webcam working in powershell to pass to wsl2
 winget install usbipd
 usbipd list                          # Find your camera BUSID
+
 usbipd bind --busid 1-6          # Bind the camera
 usbipd attach --wsl --busid 1-6  # Attach to WSL2
 
+# unbind
+usbipd unbind --busid 1-6
+usbipd detach --busid 1-6
+
 # then run tonypi pyhton script in wsl2
-uv run python3 tonypi_pose_mimic.py
+uv run python3 tonypi_pose_mimic.py --source /dev/video0

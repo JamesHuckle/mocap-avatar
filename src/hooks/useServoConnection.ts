@@ -8,10 +8,17 @@ export const DEFAULT_MAX_PULSE = 1000;
 // All servo IDs (1-16)
 export const ALL_SERVOS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16'];
 
-// Default enabled servos (shoulders only)
+// Default enabled servos (all tracked joints) - CORRECTED servo numbers
 export const DEFAULT_ENABLED_SERVOS = new Set([
-  '7', '8',   // Left shoulder
-  '15', '16', // Right shoulder
+  // Arms
+  '6', '7', '8',     // Left arm: elbow, shoulder_side, shoulder_fwd
+  '14', '15', '16',  // Right arm: elbow, shoulder_side, shoulder_fwd
+  // Hips
+  '4', '5',          // Right hip: front, side
+  '12', '13',        // Left hip: front, side
+  // Knees
+  '3',               // Right knee
+  '11',              // Left knee
 ]);
 
 // Convert degrees to pulse with configurable limits (legacy path; not used when sending pulses directly)

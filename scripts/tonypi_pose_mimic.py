@@ -5,14 +5,14 @@ TonyPi Pose Mimic - Full Body Tracking (WSL2 Compatible)
 Runs MediaPipe pose estimation and outputs servo commands needed 
 to make TonyPi mimic your movements including arms, hips, and knees.
 
-TonyPi Servo Map (from action group analysis):
+TonyPi Servo Map (CORRECTED):
 ==============================================
 RIGHT SIDE:                    LEFT SIDE:
   Servo 1:  Right ankle          Servo 9:  Left ankle
-  Servo 2:  Right knee           Servo 10: Left knee
-  Servo 3:  Right hip (front)    Servo 11: Left hip (front)
-  Servo 4:  Right hip (side)     Servo 12: Left hip (side)
-  Servo 5:  Right shoulder (fwd) Servo 13: Left ??? 
+  Servo 2:  (unused)             Servo 10: (unused)
+  Servo 3:  Right knee           Servo 11: Left knee
+  Servo 4:  Right hip (front)    Servo 12: Left hip (front)
+  Servo 5:  Right hip (side)     Servo 13: Left hip (side)
   Servo 6:  Left elbow           Servo 14: Right elbow
   Servo 7:  Left shoulder (side) Servo 15: Right shoulder (side)
   Servo 8:  Left shoulder (fwd)  Servo 16: Right shoulder (fwd)
@@ -253,57 +253,76 @@ class TonyPiPoseMimic:
         )
         
         if all(a is not None for a in [left_shoulder_angle, left_elbow_angle, right_shoulder_angle, right_elbow_angle]):
-            # Map angles to servo positions
-            # NOTE: L/R swapped because camera image is mirrored
-            # Camera "left" (landmarks 11,13,15) → Robot RIGHT servos
-            # Camera "right" (landmarks 12,14,16) → Robot LEFT servos
+            # Camera LEFT → Robot LEFT, Camera RIGHT → Robot RIGHT
             
-            # Servo 15: Right shoulder (side) ← from camera's left shoulder
-            servo15 = clamp_servo(int(val_map(left_shoulder_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
-            servo15 = self.smooth_servo(15, servo15)
-            commands.append(ServoCommand(15, servo15, "R_shoulder_side"))
-            
-            # Servo 14: Right elbow ← from camera's left elbow
-            servo14 = clamp_servo(int(val_map(left_elbow_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
-            servo14 = self.smooth_servo(14, servo14)
-            commands.append(ServoCommand(14, servo14, "R_elbow"))
-            
-            # Servo 7: Left shoulder (side) ← from camera's right shoulder
-            servo7 = clamp_servo(int(val_map(right_shoulder_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
+            # Servo 7: Left shoulder (side) ← from camera's LEFT shoulder
+            servo7 = clamp_servo(int(val_map(left_shoulder_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
             servo7 = self.smooth_servo(7, servo7)
             commands.append(ServoCommand(7, servo7, "L_shoulder_side"))
             
-            # Servo 6: Left elbow ← from camera's right elbow
-            servo6 = clamp_servo(int(val_map(right_elbow_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
+            # Servo 6: Left elbow ← from camera's LEFT elbow
+            servo6 = clamp_servo(int(val_map(left_elbow_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
             servo6 = self.smooth_servo(6, servo6)
             commands.append(ServoCommand(6, servo6, "L_elbow"))
+            
+            # Servo 15: Right shoulder (side) ← from camera's RIGHT shoulder
+            servo15 = clamp_servo(int(val_map(right_shoulder_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
+            servo15 = self.smooth_servo(15, servo15)
+            commands.append(ServoCommand(15, servo15, "R_shoulder_side"))
+            
+            # Servo 14: Right elbow ← from camera's RIGHT elbow
+            servo14 = clamp_servo(int(val_map(right_elbow_angle, -90, 90, self.SERVO_MIN, self.SERVO_MAX)))
+            servo14 = self.smooth_servo(14, servo14)
+            commands.append(ServoCommand(14, servo14, "R_elbow"))
         
         return commands
     
     def calculate_shoulder_forward_servos(self, landmarks, width, height) -> List[ServoCommand]:
-        """Calculate forward shoulder rotation (arms forward/backward)."""
+        """Calculate forward shoulder rotation (arms forward/backward).
+        
+        IMPROVED: Uses angle of upper arm in YZ plane (forward/back angle)
+        relative to torso for better accuracy and responsiveness.
+        """
         commands = []
         
-        # Use z-depth of wrist relative to shoulder to estimate forward rotation
+        # Get landmarks for angle calculation
         left_shoulder = landmarks[11]
         right_shoulder = landmarks[12]
-        left_wrist = landmarks[15]
-        right_wrist = landmarks[16]
+        left_elbow = landmarks[13]
+        right_elbow = landmarks[14]
+        left_hip = landmarks[23]
+        right_hip = landmarks[24]
         
-        # Z difference indicates forward/backward arm position
-        # Negative z = closer to camera = arm forward
-        left_z_diff = left_shoulder.z - left_wrist.z
-        right_z_diff = right_shoulder.z - right_wrist.z
+        # Calculate angle of upper arm relative to torso in the forward/back plane
+        # Using Y (vertical) and Z (depth) components
         
-        # Map z difference to servo position (L/R swapped for mirror)
-        # Typical z range is roughly -0.5 to 0.5
-        # Servo 16: Right shoulder forward ← from camera's left
-        servo16 = clamp_servo(int(val_map(left_z_diff, -0.3, 0.3, 500, 125)))
+        # Left arm forward angle (will map to robot RIGHT due to mirror)
+        left_arm_y = left_elbow.y - left_shoulder.y
+        left_arm_z = left_elbow.z - left_shoulder.z
+        left_torso_y = left_hip.y - left_shoulder.y
+        left_torso_z = left_hip.z - left_shoulder.z
+        
+        # Calculate angle between arm and torso in YZ plane
+        left_fwd_angle = math.atan2(left_arm_z, left_arm_y) - math.atan2(left_torso_z, left_torso_y)
+        left_fwd_degrees = math.degrees(left_fwd_angle)
+        
+        # Right arm forward angle (will map to robot LEFT due to mirror)
+        right_arm_y = right_elbow.y - right_shoulder.y
+        right_arm_z = right_elbow.z - right_shoulder.z
+        right_torso_y = right_hip.y - right_shoulder.y
+        right_torso_z = right_hip.z - right_shoulder.z
+        
+        right_fwd_angle = math.atan2(right_arm_z, right_arm_y) - math.atan2(right_torso_z, right_torso_y)
+        right_fwd_degrees = math.degrees(right_fwd_angle)
+        
+        # Map angle range: -60° (arm back) to +60° (arm forward) → servo range
+        # Servo 16: Right shoulder forward ← from camera's RIGHT
+        servo16 = clamp_servo(int(val_map(right_fwd_degrees, -60, 60, self.SERVO_MIN, self.SERVO_MAX)))
         servo16 = self.smooth_servo(16, servo16)
         commands.append(ServoCommand(16, servo16, "R_shoulder_fwd"))
         
-        # Servo 8: Left shoulder forward ← from camera's right
-        servo8 = clamp_servo(int(val_map(right_z_diff, -0.3, 0.3, 500, 900)))
+        # Servo 8: Left shoulder forward ← from camera's LEFT
+        servo8 = clamp_servo(int(val_map(left_fwd_degrees, -60, 60, self.SERVO_MAX, self.SERVO_MIN)))
         servo8 = self.smooth_servo(8, servo8)
         commands.append(ServoCommand(8, servo8, "L_shoulder_fwd"))
         
@@ -333,18 +352,18 @@ class TonyPiPoseMimic:
             np.array(right_hip) - np.array(right_knee)
         )
         
-        # L/R swapped for mirror
+        # Lower body: Camera LEFT → Robot RIGHT (mirrored)
         if left_hip_side_angle is not None:
-            # Servo 4: Right hip side ← from camera's left hip
-            servo4 = clamp_servo(int(val_map(left_hip_side_angle, -45, 45, 450, 750)))
-            servo4 = self.smooth_servo(4, servo4)
-            commands.append(ServoCommand(4, servo4, "R_hip_side"))
+            # Servo 5: Right hip side ← from camera's LEFT hip
+            servo5 = clamp_servo(int(val_map(left_hip_side_angle, -45, 45, 450, 750)))
+            servo5 = self.smooth_servo(5, servo5)
+            commands.append(ServoCommand(5, servo5, "R_hip_side"))
         
         if right_hip_side_angle is not None:
-            # Servo 12: Left hip side ← from camera's right hip
-            servo12 = clamp_servo(int(val_map(right_hip_side_angle, -45, 45, 250, 550)))
-            servo12 = self.smooth_servo(12, servo12)
-            commands.append(ServoCommand(12, servo12, "L_hip_side"))
+            # Servo 13: Left hip side ← from camera's RIGHT hip
+            servo13 = clamp_servo(int(val_map(right_hip_side_angle, -45, 45, 250, 550)))
+            servo13 = self.smooth_servo(13, servo13)
+            commands.append(ServoCommand(13, servo13, "L_hip_side"))
         
         # Hip front/back angle (using z-depth)
         left_hip_lm = landmarks[23]
@@ -352,19 +371,20 @@ class TonyPiPoseMimic:
         left_knee_lm = landmarks[25]
         right_knee_lm = landmarks[26]
         
-        # Z difference for hip bend forward/backward (L/R swapped for mirror)
+        # Z difference for hip bend forward/backward
+        # Lower body: Camera LEFT → Robot RIGHT (mirrored)
         left_hip_z = left_hip_lm.z - left_knee_lm.z
         right_hip_z = right_hip_lm.z - right_knee_lm.z
         
-        # Servo 3: Right hip front ← from camera's left hip
-        servo3 = clamp_servo(int(val_map(left_hip_z, -0.2, 0.2, 700, 300)))
-        servo3 = self.smooth_servo(3, servo3)
-        commands.append(ServoCommand(3, servo3, "R_hip_front"))
+        # Servo 4: Right hip front ← from camera's LEFT hip
+        servo4 = clamp_servo(int(val_map(left_hip_z, -0.2, 0.2, 700, 300)))
+        servo4 = self.smooth_servo(4, servo4)
+        commands.append(ServoCommand(4, servo4, "R_hip_front"))
         
-        # Servo 11: Left hip front ← from camera's right hip
-        servo11 = clamp_servo(int(val_map(right_hip_z, -0.2, 0.2, 300, 700)))
-        servo11 = self.smooth_servo(11, servo11)
-        commands.append(ServoCommand(11, servo11, "L_hip_front"))
+        # Servo 12: Left hip front ← from camera's RIGHT hip
+        servo12 = clamp_servo(int(val_map(right_hip_z, -0.2, 0.2, 300, 700)))
+        servo12 = self.smooth_servo(12, servo12)
+        commands.append(ServoCommand(12, servo12, "L_hip_front"))
         
         return commands
     
@@ -393,23 +413,23 @@ class TonyPiPoseMimic:
         # Debug: print knee angles to diagnose
         # print(f"DEBUG: left_knee_angle={left_knee_angle}, right_knee_angle={right_knee_angle}")
         
-        # L/R swapped for mirror
+        # Lower body: Camera LEFT → Robot RIGHT (mirrored)
         # Use absolute angle value since knee angle can be negative depending on direction
         if left_knee_angle is not None:
-            # Servo 2: Right knee ← from camera's left knee
+            # Servo 3: Right knee ← from camera's LEFT knee
             # Straight leg ~180 degrees, bent ~90 degrees
             # Use abs() since angle direction can vary
             angle_abs = abs(left_knee_angle)
-            servo2 = clamp_servo(int(val_map(angle_abs, 90, 180, 150, 390)))
-            servo2 = self.smooth_servo(2, servo2)
-            commands.append(ServoCommand(2, servo2, "R_knee"))
+            servo3 = clamp_servo(int(val_map(angle_abs, 90, 180, 150, 390)))
+            servo3 = self.smooth_servo(3, servo3)
+            commands.append(ServoCommand(3, servo3, "R_knee"))
         
         if right_knee_angle is not None:
-            # Servo 10: Left knee ← from camera's right knee
+            # Servo 11: Left knee ← from camera's RIGHT knee
             angle_abs = abs(right_knee_angle)
-            servo10 = clamp_servo(int(val_map(angle_abs, 90, 180, 850, 610)))
-            servo10 = self.smooth_servo(10, servo10)
-            commands.append(ServoCommand(10, servo10, "L_knee"))
+            servo11 = clamp_servo(int(val_map(angle_abs, 90, 180, 850, 610)))
+            servo11 = self.smooth_servo(11, servo11)
+            commands.append(ServoCommand(11, servo11, "L_knee"))
         
         return commands
     

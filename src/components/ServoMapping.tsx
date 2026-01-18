@@ -1,8 +1,9 @@
 import {Box, Text, VStack, HStack, Grid, GridItem, Input, Button, Badge, Switch, Collapse, useToast, Tooltip, NumberInput, NumberInputField, NumberInputStepper, NumberIncrementStepper, NumberDecrementStepper} from '@chakra-ui/react';
 import {NormalizedLandmark} from '@mediapipe/tasks-vision';
-import {useState, useEffect, useRef, useCallback} from 'react';
+import {useState, useEffect, useRef, useCallback, useMemo} from 'react';
 import {useServoConnection, ALL_SERVOS, DEFAULT_ENABLED_SERVOS} from '../hooks/useServoConnection';
 import {DEFAULT_SERVO_CALIBRATIONS} from '../config/servoCalibrationDefaults';
+import {TonyPiServoCalculator, ServoPositions} from '../lib/tonypiServoCalculations';
 
 // Calibration settings per servo
 export interface ServoCalibration {
@@ -70,203 +71,78 @@ function mapRawToPulse(rawAngle: number, cal: ServoCalibration): number {
   return Math.round(t * 1000);
 }
 
-// TonyPi Servo Configuration - Updated mappings
+// TonyPi Servo Configuration - CORRECTED mappings
+// NOTE: This matches the Python tonypi_pose_mimic.py exactly
 export const SERVO_CONFIG: Record<string, {name: string; group: string}> = {
-  '1': {name: 'left_ankle_side', group: 'left_leg'},
-  '2': {name: 'left_ankle_up', group: 'left_leg'},
-  '3': {name: 'left_knee_up', group: 'left_leg'},
-  '4': {name: 'left_hip_up', group: 'left_leg'},
-  '5': {name: 'left_hip_side', group: 'left_leg'},
-  '6': {name: 'left_elbow_up', group: 'left_arm'},
+  '1': {name: 'right_ankle', group: 'right_leg'},
+  '2': {name: 'unused', group: 'right_leg'},
+  '3': {name: 'right_knee', group: 'right_leg'},
+  '4': {name: 'right_hip_front', group: 'right_leg'},
+  '5': {name: 'right_hip_side', group: 'right_leg'},
+  '6': {name: 'left_elbow', group: 'left_arm'},
   '7': {name: 'left_shoulder_side', group: 'left_arm'},
-  '8': {name: 'left_shoulder_rotate', group: 'left_arm'},
-  '9': {name: 'right_ankle_side', group: 'right_leg'},
-  '10': {name: 'right_ankle_up', group: 'right_leg'},
-  '11': {name: 'right_knee_up', group: 'right_leg'},
-  '12': {name: 'right_hip_up', group: 'right_leg'},
-  '13': {name: 'right_hip_side', group: 'right_leg'},
-  '14': {name: 'right_elbow_up', group: 'right_arm'},
+  '8': {name: 'left_shoulder_fwd', group: 'left_arm'},
+  '9': {name: 'left_ankle', group: 'left_leg'},
+  '10': {name: 'unused', group: 'left_leg'},
+  '11': {name: 'left_knee', group: 'left_leg'},
+  '12': {name: 'left_hip_front', group: 'left_leg'},
+  '13': {name: 'left_hip_side', group: 'left_leg'},
+  '14': {name: 'right_elbow', group: 'right_arm'},
   '15': {name: 'right_shoulder_side', group: 'right_arm'},
-  '16': {name: 'right_shoulder_rotate', group: 'right_arm'},
+  '16': {name: 'right_shoulder_fwd', group: 'right_arm'},
 } as const;
-
-// MediaPipe Pose Landmark indices
-const MP = {
-  NOSE: 0,
-  LEFT_SHOULDER: 11,
-  RIGHT_SHOULDER: 12,
-  LEFT_ELBOW: 13,
-  RIGHT_ELBOW: 14,
-  LEFT_WRIST: 15,
-  RIGHT_WRIST: 16,
-  LEFT_HIP: 23,
-  RIGHT_HIP: 24,
-  LEFT_KNEE: 25,
-  RIGHT_KNEE: 26,
-  LEFT_ANKLE: 27,
-  RIGHT_ANKLE: 28,
-  LEFT_FOOT_INDEX: 31,
-  RIGHT_FOOT_INDEX: 32,
-};
 
 export interface ServoAngles {
   [key: string]: number;
 }
 
-type Vec3 = {x: number; y: number; z: number};
+// Singleton calculator instance (matches Python logic exactly)
+const tonypiCalculator = new TonyPiServoCalculator(true); // fullBody=true
 
-// Calculate angle at joint B given points A-B-C (returns 0-180°)
-// 180° = straight line, 0° = fully folded back
-function calcJointAngle(a: Vec3, b: Vec3, c: Vec3): number {
-  const ba = {x: a.x - b.x, y: a.y - b.y, z: a.z - b.z};
-  const bc = {x: c.x - b.x, y: c.y - b.y, z: c.z - b.z};
+/**
+ * Calculate servo pulses using the new Python-matching logic
+ * Returns servo positions directly in pulse range (125-875)
+ * 
+ * NOTE: This replaces the old calculateServoAngles with correct logic
+ * that matches scripts/tonypi_pose_mimic.py exactly
+ */
+export function calculateServoPulses(
+  poseLandmarks: NormalizedLandmark[],
+  _worldLandmarks?: NormalizedLandmark[]
+): ServoPositions {
+  // IMPORTANT: Always use poseLandmarks (normalized 0-1 image coords)
+  // NOT worldLandmarks (which are in meters, centered at hip)
+  // Python uses pose_landmarks which are normalized, matching poseLandmarks
+  if (!poseLandmarks || poseLandmarks.length < 33) return {};
   
-  const dot = ba.x * bc.x + ba.y * bc.y + ba.z * bc.z;
-  const magBA = Math.sqrt(ba.x * ba.x + ba.y * ba.y + ba.z * ba.z);
-  const magBC = Math.sqrt(bc.x * bc.x + bc.y * bc.y + bc.z * bc.z);
-  
-  if (magBA === 0 || magBC === 0) return 180;
-  
-  const cosAngle = Math.max(-1, Math.min(1, dot / (magBA * magBC)));
-  return Math.acos(cosAngle) * (180 / Math.PI);
+  const positions = tonypiCalculator.calculateServoPositions(poseLandmarks);
+  return positions || {};
 }
 
-// Calculate angle between two joints relative to torso vertical
-// Returns angle where: 0° = limb pointing down along torso, 90° = horizontal, 180° = pointing up
-function calcLimbAngle(shoulder: Vec3, elbow: Vec3, hip: Vec3): number {
-  // Torso direction (shoulder to hip = "down")
-  const torso = {x: hip.x - shoulder.x, y: hip.y - shoulder.y, z: hip.z - shoulder.z};
-  // Limb direction (shoulder to elbow)
-  const limb = {x: elbow.x - shoulder.x, y: elbow.y - shoulder.y, z: elbow.z - shoulder.z};
-  
-  const dot = torso.x * limb.x + torso.y * limb.y + torso.z * limb.z;
-  const magTorso = Math.sqrt(torso.x * torso.x + torso.y * torso.y + torso.z * torso.z);
-  const magLimb = Math.sqrt(limb.x * limb.x + limb.y * limb.y + limb.z * limb.z);
-  
-  if (magTorso === 0 || magLimb === 0) return 0;
-  
-  const cosAngle = Math.max(-1, Math.min(1, dot / (magTorso * magLimb)));
-  return Math.acos(cosAngle) * (180 / Math.PI);
-}
-
-// Calculate roll (forward/backward rotation) based on Z depth difference
-function calcRoll(upper: Vec3, lower: Vec3): number {
-  const dz = lower.z - upper.z;
-  const dx = Math.abs(lower.x - upper.x) + 0.001;
-  return Math.atan2(dz, dx) * (180 / Math.PI);
-}
-
-// Map a joint angle to servo position
-// jointAngle: the measured angle
-// neutralJoint: what joint angle = 90° servo (neutral position)
-// sensitivity: how much joint movement = how much servo movement (degrees joint per 90° servo)
-function mapToServo(jointAngle: number, neutralJoint: number, sensitivity: number, invert = false): number {
-  const delta = jointAngle - neutralJoint;
-  let servo = 90 + (delta / sensitivity) * 90;
-  servo = Math.max(0, Math.min(180, servo));
-  if (invert) servo = 180 - servo;
-  return Math.round(servo);
-}
-
-// Convert MediaPipe pose to TonyPi servo angles
+/**
+ * Legacy function - converts new pulse output to old ServoAngles format
+ * This maintains backward compatibility with calibration system
+ */
 export function calculateServoAngles(
   poseLandmarks: NormalizedLandmark[],
-  worldLandmarks?: NormalizedLandmark[]
+  _worldLandmarks?: NormalizedLandmark[]
 ): ServoAngles {
+  // Use new calculator - always uses poseLandmarks (normalized image coords)
+  const pulses = calculateServoPulses(poseLandmarks);
   const angles: ServoAngles = {};
-  const lm = worldLandmarks || poseLandmarks;
   
-  if (!lm || lm.length < 33) return angles;
-
-  // Get landmarks
-  const lShoulder = lm[MP.LEFT_SHOULDER];
-  const rShoulder = lm[MP.RIGHT_SHOULDER];
-  const lElbow = lm[MP.LEFT_ELBOW];
-  const rElbow = lm[MP.RIGHT_ELBOW];
-  const lWrist = lm[MP.LEFT_WRIST];
-  const rWrist = lm[MP.RIGHT_WRIST];
-  const lHip = lm[MP.LEFT_HIP];
-  const rHip = lm[MP.RIGHT_HIP];
-  const lKnee = lm[MP.LEFT_KNEE];
-  const rKnee = lm[MP.RIGHT_KNEE];
-  const lAnkle = lm[MP.LEFT_ANKLE];
-  const rAnkle = lm[MP.RIGHT_ANKLE];
-  const lFoot = lm[MP.LEFT_FOOT_INDEX];
-  const rFoot = lm[MP.RIGHT_FOOT_INDEX];
-
-  // === LEFT ARM ===
-  // Servo 8: left_shoulder_rotate - arm rotation from torso
-  // 0° = arm along body, 90° = arm horizontal, 180° = arm up
-  const lShoulderAngle = calcLimbAngle(lShoulder, lElbow, lHip);
-  angles['8'] = mapToServo(lShoulderAngle, 0, 90); // Arm down = 90° servo
+  for (const [id, pulse] of Object.entries(pulses)) {
+    // Store pulse directly - calibration will be bypassed when using new mode
+    angles[id] = pulse;
+  }
   
-  // Servo 7: left_shoulder_side - arm forward/backward
-  const lShoulderRoll = calcRoll(lShoulder, lElbow);
-  angles['7'] = mapToServo(lShoulderRoll, 0, 45);
+  // Fill in missing servos with neutral position (500)
+  for (const id of ALL_SERVOS) {
+    if (!(id in angles)) {
+      angles[id] = 500; // Neutral position
+    }
+  }
   
-  // Servo 6: left_elbow_up - elbow bend (180° = straight)
-  const lElbowAngle = calcJointAngle(lShoulder, lElbow, lWrist);
-  angles['6'] = mapToServo(lElbowAngle, 180, 90); // Straight arm = 90° servo
-
-  // === RIGHT ARM ===
-  // Servo 16: right_shoulder_rotate
-  const rShoulderAngle = calcLimbAngle(rShoulder, rElbow, rHip);
-  angles['16'] = mapToServo(rShoulderAngle, 0, 90, true); // Inverted for right side
-  
-  // Servo 15: right_shoulder_side
-  const rShoulderRoll = calcRoll(rShoulder, rElbow);
-  angles['15'] = mapToServo(rShoulderRoll, 0, 45, true);
-  
-  // Servo 14: right_elbow_up
-  const rElbowAngle = calcJointAngle(rShoulder, rElbow, rWrist);
-  angles['14'] = mapToServo(rElbowAngle, 180, 90, true);
-
-  // Servo 11: right_knee_up (placeholder - knee not arm)
-  // Note: This should map to actual knee if using leg tracking
-  angles['11'] = 90;
-
-  // === LEFT LEG ===
-  // Servo 4: left_hip_up - leg angle from torso
-  const lHipAngle = calcLimbAngle(lHip, lKnee, lShoulder);
-  angles['4'] = mapToServo(180 - lHipAngle, 0, 60);
-  
-  // Servo 5: left_hip_side
-  const lHipRoll = calcRoll(lHip, lKnee);
-  angles['5'] = mapToServo(lHipRoll, 0, 30);
-
-  // Servo 3: left_knee_up (180° = straight leg)
-  const lKneeAngle = calcJointAngle(lHip, lKnee, lAnkle);
-  angles['3'] = mapToServo(lKneeAngle, 180, 90);
-
-  // Servo 2: left_ankle_up
-  const lAnkleAngle = calcJointAngle(lKnee, lAnkle, lFoot);
-  angles['2'] = mapToServo(lAnkleAngle, 90, 45);
-
-  // Servo 1: left_ankle_side
-  const lAnkleRoll = calcRoll(lAnkle, lFoot);
-  angles['1'] = mapToServo(lAnkleRoll, 0, 20);
-
-  // === RIGHT LEG ===
-  // Servo 12: right_hip_up
-  const rHipAngle = calcLimbAngle(rHip, rKnee, rShoulder);
-  angles['12'] = mapToServo(180 - rHipAngle, 0, 60, true);
-  
-  // Servo 13: right_hip_side
-  const rHipRoll = calcRoll(rHip, rKnee);
-  angles['13'] = mapToServo(rHipRoll, 0, 30, true);
-
-  // Servo 11: right_knee_up
-  const rKneeAngle = calcJointAngle(rHip, rKnee, rAnkle);
-  angles['11'] = mapToServo(rKneeAngle, 180, 90, true);
-
-  // Servo 10: right_ankle_up
-  const rAnkleAngle = calcJointAngle(rKnee, rAnkle, rFoot);
-  angles['10'] = mapToServo(rAnkleAngle, 90, 45, true);
-
-  // Servo 9: right_ankle_side
-  const rAnkleRoll = calcRoll(rAnkle, rFoot);
-  angles['9'] = mapToServo(rAnkleRoll, 0, 20, true);
-
   return angles;
 }
 
@@ -454,87 +330,6 @@ function ServoIndicator({id, name, rawAngle, calibratedAngle, group, streaming, 
   );
 }
 
-// Stick figure using MediaPipe positions
-function StickFigure({landmarks}: {landmarks?: NormalizedLandmark[]}) {
-  const W = 280, H = 320, M = 20;
-  
-  const toSVG = (lm: NormalizedLandmark | undefined, dx: number, dy: number) => {
-    if (!lm) return {x: dx, y: dy};
-    return {x: M + lm.x * (W - 2*M), y: M + lm.y * (H - 2*M)};
-  };
-
-  const pos = landmarks ? {
-    nose: toSVG(landmarks[MP.NOSE], 110, 25),
-    lShoulder: toSVG(landmarks[MP.LEFT_SHOULDER], 75, 60),
-    rShoulder: toSVG(landmarks[MP.RIGHT_SHOULDER], 145, 60),
-    lElbow: toSVG(landmarks[MP.LEFT_ELBOW], 55, 110),
-    rElbow: toSVG(landmarks[MP.RIGHT_ELBOW], 165, 110),
-    lWrist: toSVG(landmarks[MP.LEFT_WRIST], 45, 155),
-    rWrist: toSVG(landmarks[MP.RIGHT_WRIST], 175, 155),
-    lHip: toSVG(landmarks[MP.LEFT_HIP], 85, 145),
-    rHip: toSVG(landmarks[MP.RIGHT_HIP], 135, 145),
-    lKnee: toSVG(landmarks[MP.LEFT_KNEE], 80, 200),
-    rKnee: toSVG(landmarks[MP.RIGHT_KNEE], 140, 200),
-    lAnkle: toSVG(landmarks[MP.LEFT_ANKLE], 75, 255),
-    rAnkle: toSVG(landmarks[MP.RIGHT_ANKLE], 145, 255),
-  } : {
-    nose: {x: 110, y: 25}, lShoulder: {x: 75, y: 60}, rShoulder: {x: 145, y: 60},
-    lElbow: {x: 55, y: 110}, rElbow: {x: 165, y: 110}, lWrist: {x: 45, y: 155}, rWrist: {x: 175, y: 155},
-    lHip: {x: 85, y: 145}, rHip: {x: 135, y: 145}, lKnee: {x: 80, y: 200}, rKnee: {x: 140, y: 200},
-    lAnkle: {x: 75, y: 255}, rAnkle: {x: 145, y: 255},
-  };
-
-  const neck = {x: (pos.lShoulder.x + pos.rShoulder.x)/2, y: (pos.lShoulder.y + pos.rShoulder.y)/2};
-  const hipC = {x: (pos.lHip.x + pos.rHip.x)/2, y: (pos.lHip.y + pos.rHip.y)/2};
-
-  return (
-    <Box w={`${W}px`} h={`${H}px`} mx="auto" bg="gray.800" borderRadius="lg">
-      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}>
-        <rect width={W} height={H} fill="#1a1a2e" />
-        
-        {/* Torso */}
-        <line x1={neck.x} y1={neck.y} x2={hipC.x} y2={hipC.y} stroke="#4a5568" strokeWidth="4" />
-        <line x1={pos.lShoulder.x} y1={pos.lShoulder.y} x2={pos.rShoulder.x} y2={pos.rShoulder.y} stroke="#4a5568" strokeWidth="4" />
-        <line x1={pos.lHip.x} y1={pos.lHip.y} x2={pos.rHip.x} y2={pos.rHip.y} stroke="#4a5568" strokeWidth="4" />
-        
-        {/* Head */}
-        <line x1={neck.x} y1={neck.y} x2={pos.nose.x} y2={pos.nose.y - 10} stroke="#a855f7" strokeWidth="3" />
-        <circle cx={pos.nose.x} cy={pos.nose.y - 10} r="10" fill="none" stroke="#a855f7" strokeWidth="3" />
-        
-        {/* Left Arm */}
-        <line x1={pos.lShoulder.x} y1={pos.lShoulder.y} x2={pos.lElbow.x} y2={pos.lElbow.y} stroke="#3b82f6" strokeWidth="4" />
-        <line x1={pos.lElbow.x} y1={pos.lElbow.y} x2={pos.lWrist.x} y2={pos.lWrist.y} stroke="#3b82f6" strokeWidth="3" />
-        <circle cx={pos.lShoulder.x} cy={pos.lShoulder.y} r="5" fill="#3b82f6" />
-        <circle cx={pos.lElbow.x} cy={pos.lElbow.y} r="4" fill="#3b82f6" />
-        <circle cx={pos.lWrist.x} cy={pos.lWrist.y} r="3" fill="#3b82f6" />
-        
-        {/* Right Arm */}
-        <line x1={pos.rShoulder.x} y1={pos.rShoulder.y} x2={pos.rElbow.x} y2={pos.rElbow.y} stroke="#ef4444" strokeWidth="4" />
-        <line x1={pos.rElbow.x} y1={pos.rElbow.y} x2={pos.rWrist.x} y2={pos.rWrist.y} stroke="#ef4444" strokeWidth="3" />
-        <circle cx={pos.rShoulder.x} cy={pos.rShoulder.y} r="5" fill="#ef4444" />
-        <circle cx={pos.rElbow.x} cy={pos.rElbow.y} r="4" fill="#ef4444" />
-        <circle cx={pos.rWrist.x} cy={pos.rWrist.y} r="3" fill="#ef4444" />
-        
-        {/* Left Leg */}
-        <line x1={pos.lHip.x} y1={pos.lHip.y} x2={pos.lKnee.x} y2={pos.lKnee.y} stroke="#22c55e" strokeWidth="4" />
-        <line x1={pos.lKnee.x} y1={pos.lKnee.y} x2={pos.lAnkle.x} y2={pos.lAnkle.y} stroke="#22c55e" strokeWidth="3" />
-        <circle cx={pos.lHip.x} cy={pos.lHip.y} r="5" fill="#22c55e" />
-        <circle cx={pos.lKnee.x} cy={pos.lKnee.y} r="4" fill="#22c55e" />
-        <circle cx={pos.lAnkle.x} cy={pos.lAnkle.y} r="3" fill="#22c55e" />
-        
-        {/* Right Leg */}
-        <line x1={pos.rHip.x} y1={pos.rHip.y} x2={pos.rKnee.x} y2={pos.rKnee.y} stroke="#f97316" strokeWidth="4" />
-        <line x1={pos.rKnee.x} y1={pos.rKnee.y} x2={pos.rAnkle.x} y2={pos.rAnkle.y} stroke="#f97316" strokeWidth="3" />
-        <circle cx={pos.rHip.x} cy={pos.rHip.y} r="5" fill="#f97316" />
-        <circle cx={pos.rKnee.x} cy={pos.rKnee.y} r="4" fill="#f97316" />
-        <circle cx={pos.rAnkle.x} cy={pos.rAnkle.y} r="3" fill="#f97316" />
-        
-        <text x="5" y="12" fill="#6b7280" fontSize="8">POSE</text>
-      </svg>
-    </Box>
-  );
-}
-
 // Throttle interval in ms (20Hz = 50ms)
 const SEND_INTERVAL_MS = 50;
 
@@ -692,16 +487,22 @@ export default function ServoMapping({
 
   const servo = useServoConnection(robotUrl, {enabledServos});
   
-  // Calculate raw angles from pose
-  const rawAngles = poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {};
+  // Calculate servo pulses directly using Python-matching logic
+  // The new calculator outputs pulse values (125-875) directly
+  const rawAngles = useMemo(() => 
+    poseLandmarks ? calculateServoAngles(poseLandmarks, worldLandmarks) : {},
+    [poseLandmarks, worldLandmarks]
+  );
   
-  // Apply calibration to get output pulses
-  const calibratedAngles: ServoAngles = {};
-  for (const id of ALL_SERVOS) {
-    const raw = rawAngles[id] ?? 90;
-    const cal = getCalibration(id);
-    calibratedAngles[id] = mapRawToPulse(raw, cal);
-  }
+  // The calculator outputs pulse values directly, no calibration needed
+  // Values are in range 125-875 (TonyPi safe operating range)
+  const calibratedAngles = useMemo(() => {
+    const angles: ServoAngles = {};
+    for (const id of ALL_SERVOS) {
+      angles[id] = rawAngles[id] ?? 500;
+    }
+    return angles;
+  }, [rawAngles]);
 
   // Stream servo data when enabled
   useEffect(() => {
@@ -818,8 +619,6 @@ export default function ServoMapping({
           </Text>
         )}
       </Box>
-
-      <StickFigure landmarks={poseLandmarks} />
 
       {/* Group Quick Toggle */}
       <HStack justify="center" spacing={3} my={3} flexWrap="wrap">
