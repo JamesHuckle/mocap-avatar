@@ -37,8 +37,15 @@
 <img height="400" alt="loading-screen" src="../media/src/images/VRMmocap-info-panel.png?raw=true">
 
 
-
+### My stuff
 
 `uv run python3 scripts/servo_client.py --robot ws://192.168.0.104:8766`
 
+# get webcam working in powershell to pass to wsl2
+winget install usbipd
+usbipd list                          # Find your camera BUSID
+usbipd bind --busid 1-6          # Bind the camera
+usbipd attach --wsl --busid 1-6  # Attach to WSL2
 
+# then run tonypi pyhton script in wsl2
+uv run python3 tonypi_pose_mimic.py

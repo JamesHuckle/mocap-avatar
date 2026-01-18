@@ -31,24 +31,31 @@ import websockets
 # Neutral position (center) for all servos
 NEUTRAL_PULSE = 500
 
-# Servo Configuration - matches UI
+# Servo Configuration (from TonyPi action group analysis)
+# NOTE: This is documentation only - not used in servo control logic
 SERVO_CONFIG = {
-    1: {'name': 'left_ankle_side', 'group': 'left_leg'},
-    2: {'name': 'left_ankle_up', 'group': 'left_leg'},
-    3: {'name': 'left_knee_up', 'group': 'left_leg'},
-    4: {'name': 'left_hip_up', 'group': 'left_leg'},
-    5: {'name': 'left_hip_side', 'group': 'left_leg'},
-    6: {'name': 'left_elbow_up', 'group': 'left_arm'},
-    7: {'name': 'left_shoulder_side', 'group': 'left_arm'},
-    8: {'name': 'left_shoulder_rotate', 'group': 'left_arm'},
-    9: {'name': 'right_ankle_side', 'group': 'right_leg'},
-    10: {'name': 'right_ankle_up', 'group': 'right_leg'},
-    11: {'name': 'right_knee_up', 'group': 'right_leg'},
-    12: {'name': 'right_hip_up', 'group': 'right_leg'},
-    13: {'name': 'right_hip_side', 'group': 'right_leg'},
-    14: {'name': 'right_elbow_up', 'group': 'right_arm'},
+    # Right leg
+    1:  {'name': 'right_ankle', 'group': 'right_leg'},
+    2:  {'name': 'right_knee', 'group': 'right_leg'},
+    3:  {'name': 'right_hip_front', 'group': 'right_leg'},
+    4:  {'name': 'right_hip_side', 'group': 'right_leg'},
+    # Left arm
+    5:  {'name': 'right_shoulder_fwd', 'group': 'right_arm'},  # Note: on left side of body
+    6:  {'name': 'left_elbow', 'group': 'left_arm'},
+    7:  {'name': 'left_shoulder_side', 'group': 'left_arm'},
+    8:  {'name': 'left_shoulder_fwd', 'group': 'left_arm'},
+    # Left leg
+    9:  {'name': 'left_ankle', 'group': 'left_leg'},
+    10: {'name': 'left_knee', 'group': 'left_leg'},
+    11: {'name': 'left_hip_front', 'group': 'left_leg'},
+    12: {'name': 'left_hip_side', 'group': 'left_leg'},
+    13: {'name': 'left_unknown', 'group': 'left_leg'},  # Function unclear
+    # Right arm
+    14: {'name': 'right_elbow', 'group': 'right_arm'},
     15: {'name': 'right_shoulder_side', 'group': 'right_arm'},
-    16: {'name': 'right_shoulder_rotate', 'group': 'right_arm'},
+    16: {'name': 'right_shoulder_fwd', 'group': 'right_arm'},
+    # Head (PWM servos, not bus servos)
+    # 17: head_pan, 18: head_tilt
 }
 
 # Default enabled servos (shoulders only)
