@@ -153,12 +153,11 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
     }
     animate();
 
-    // Animate Rotation Helper function
+    // Animate Rotation Helper function - instant response, no smoothing
     const rigRotation = (
       name: VRMHumanBoneName,
       rotation = {x: 0, y: 0, z: 0},
       dampener = 1,
-      lerpAmount = 0.3,
     ) => {
       const Part = currentVrm.humanoid.getNormalizedBoneNode(name);
       if (!Part) return;
@@ -167,25 +166,22 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
         rotation.y * dampener,
         rotation.z * dampener,
       );
-      const quaternion = new THREE.Quaternion().setFromEuler(euler);
-      Part.quaternion.slerp(quaternion, lerpAmount);
+      Part.quaternion.setFromEuler(euler);
     };
 
-    // Animate Position Helper Function
+    // Animate Position Helper Function - instant response, no smoothing
     const rigPosition = (
       name: VRMHumanBoneName,
       position = {x: 0, y: 0, z: 0},
       dampener = 1,
-      lerpAmount = 0.3,
     ) => {
       const Part = currentVrm.humanoid.getNormalizedBoneNode(name);
       if (!Part) return;
-      const vector = new THREE.Vector3(
+      Part.position.set(
         position.x * dampener,
         position.y * dampener,
         position.z * dampener,
       );
-      Part.position.lerp(vector, lerpAmount);
     };
 
     /* VRM Character Animator */
@@ -207,29 +203,24 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
         });
         if (riggedPose) {
           rigRotation('hips', riggedPose.Hips.rotation, 0.7);
-          rigPosition(
-            'hips',
-            {
-              x: -riggedPose.Hips.position.x,
-              y: riggedPose.Hips.position.y + 1,
-              z: -riggedPose.Hips.position.z,
-            },
-            1,
-            0.07,
-          );
+          rigPosition('hips', {
+            x: -riggedPose.Hips.position.x,
+            y: riggedPose.Hips.position.y + 1,
+            z: -riggedPose.Hips.position.z,
+          });
 
-          rigRotation('chest', riggedPose.Spine, 0.25, 0.3);
-          rigRotation('spine', riggedPose.Spine, 0.45, 0.3);
+          rigRotation('chest', riggedPose.Spine, 0.25);
+          rigRotation('spine', riggedPose.Spine, 0.45);
 
-          rigRotation('leftUpperArm', riggedPose.LeftUpperArm, 1, 0.3);
-          rigRotation('leftLowerArm', riggedPose.LeftLowerArm, 1, 0.3);
-          rigRotation('rightUpperArm', riggedPose.RightUpperArm, 1, 0.3);
-          rigRotation('rightLowerArm', riggedPose.RightLowerArm, 1, 0.3);
+          rigRotation('leftUpperArm', riggedPose.LeftUpperArm);
+          rigRotation('leftLowerArm', riggedPose.LeftLowerArm);
+          rigRotation('rightUpperArm', riggedPose.RightUpperArm);
+          rigRotation('rightLowerArm', riggedPose.RightLowerArm);
 
-          rigRotation('leftUpperLeg', riggedPose.LeftUpperLeg, 1, 0.3);
-          rigRotation('leftLowerLeg', riggedPose.LeftLowerLeg, 1, 0.3);
-          rigRotation('rightUpperLeg', riggedPose.RightUpperLeg, 1, 0.3);
-          rigRotation('rightLowerLeg', riggedPose.RightLowerLeg, 1, 0.3);
+          rigRotation('leftUpperLeg', riggedPose.LeftUpperLeg);
+          rigRotation('leftLowerLeg', riggedPose.LeftLowerLeg);
+          rigRotation('rightUpperLeg', riggedPose.RightUpperLeg);
+          rigRotation('rightLowerLeg', riggedPose.RightLowerLeg);
         }
       }
 
