@@ -16,6 +16,7 @@ import {useSpring, animated} from '@react-spring/web';
 import ToggleButton from './ToggleButton';
 import InfoModal from './InfoModal';
 import ServoMapping from './ServoMapping';
+import AnimationPlayer from './AnimationPlayer';
 
 export interface HolisticResults {
   poseLandmarks?: NormalizedLandmark[];
@@ -28,6 +29,8 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
   const [cameraIsOn, setCameraIsOn] = useState(false);
   const [isDayTheme, setisDayTheme] = useState(true);
   const [showServoPanel, setShowServoPanel] = useState(true);
+  const [showAnimationPanel, setShowAnimationPanel] = useState(false);
+  const [animationIsPlaying, setAnimationIsPlaying] = useState(false);
   const [poseData, setPoseData] = useState<{
     poseLandmarks?: NormalizedLandmark[];
     worldLandmarks?: NormalizedLandmark[];
@@ -392,7 +395,11 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
       });
 
       drawResults(results);
-      animateVRM(currentVrm, results);
+      
+      // Only apply mocap if animation player is not active
+      if (!animationIsPlaying) {
+        animateVRM(currentVrm, results);
+      }
 
       animationFrameRef.current = requestAnimationFrame(detectAndAnimate);
     };
@@ -423,7 +430,7 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
         videoElement.srcObject = null;
       }
     };
-  }, [currentVrm, avatarBgImage, cameraIsOn]);
+  }, [currentVrm, avatarBgImage, cameraIsOn, animationIsPlaying]);
 
   return (
     <>
@@ -509,6 +516,12 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
           bgImageSrc="/robot.svg"
           bgImageUrl=""
         />
+        <ToggleButton
+          onClickButton={() => setShowAnimationPanel(prev => !prev)}
+          buttonRightPosition="368px"
+          bgImageSrc="/dance.svg"
+          bgImageUrl=""
+        />
         <canvas id="myAvatar" />
 
         {/* Servo Mapping Panel */}
@@ -530,6 +543,31 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
             <ServoMapping
               poseLandmarks={poseData.poseLandmarks}
               worldLandmarks={poseData.worldLandmarks}
+            />
+          </Box>
+        )}
+
+        {/* Animation Player Panel */}
+        {showAnimationPanel && (
+          <Box
+            position="absolute"
+            top={cameraIsOn ? '340px' : '16px'}
+            left="16px"
+            width="380px"
+            maxH={cameraIsOn ? 'calc(100vh - 356px)' : 'calc(100vh - 32px)'}
+            overflowY="auto"
+            zIndex="100"
+            transition="all 0.3s ease"
+            css={{
+              '&::-webkit-scrollbar': {width: '6px'},
+              '&::-webkit-scrollbar-track': {background: 'transparent'},
+              '&::-webkit-scrollbar-thumb': {background: '#4a5568', borderRadius: '3px'},
+            }}
+          >
+            <AnimationPlayer
+              vrm={currentVrm}
+              isActive={animationIsPlaying}
+              onActiveChange={setAnimationIsPlaying}
             />
           </Box>
         )}

@@ -54,3 +54,27 @@ usbipd detach --busid 1-6
 
 # then run tonypi pyhton script in wsl2
 uv run python3 tonypi_pose_mimic.py --source /dev/video0
+
+## TonyPi Servo Positions (Paired by Joint)
+
+| Servo | Name | Movement A | Position A | Standing | Movement B | Position B |
+|-------|------|------------|------------|----------|------------|------------|
+| 7 | L Shoulder Side | Arm raised up/out | 125 | **800** | Arm down/back | 900 |
+| 15 | R Shoulder Side | Arm down/back | 100 | **200** | Arm raised up/out | 875 |
+| 8 | L Shoulder Fwd | Arm forward | 330 | **725** | Arm back | 968 |
+| 16 | R Shoulder Fwd | Arm back | 31 | **275** | Arm forward | 787 |
+| 6 | L Elbow | Fully bent | 125 | **575** | Fully extended | 930 |
+| 14 | R Elbow | Fully extended | 450 | **425** | Fully bent | 177 |
+| 13 | L Hip Side | Leg out to side | 249 | **500** | Leg inward | 624 |
+| 5 | R Hip Side | Leg inward | 375 | **500** | Leg out to side | 750 |
+| 12 | L Hip Front | Leg forward/bent | 141 | **400** | Leg back | 875 |
+| 4 | R Hip Front | Leg back | 125 | **600** | Leg forward/bent | 857 |
+| 11 | L Knee | Fully bent (squat) | 40 | **500** | Straight | 1000 |
+| 3 | R Knee | Straight | 0 | **500** | Fully bent (squat) | 960 |
+| 9 | L Ankle | Min | 366 | **500** | Max | 570 |
+| 1 | R Ankle | Min | 395 | **500** | Max | 642 |
+| 10 | L (Unknown) | Min | 140 | **610** | Max | 950 |
+| 2 | R (Unknown) | Min | 50 | **390** | Max | 819 |
+| 17 | Head Pan | Left | 300 | **500** | Right | 760 |
+| 18 | Head Tilt | Up | 240 | **500** | Down | 500 |
+
