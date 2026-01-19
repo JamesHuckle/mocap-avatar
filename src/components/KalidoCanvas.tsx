@@ -208,9 +208,8 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
       let riggedPose, riggedLeftHand, riggedRightHand;
       const pose3DLandmarks = results.poseWorldLandmarks;
       const pose2DLandmarks = results.poseLandmarks;
-      // Note: hands may be swapped depending on camera mirroring
-      const leftHandLandmarks = results.rightHandLandmarks;
-      const rightHandLandmarks = results.leftHandLandmarks;
+      const leftHandLandmarks = results.leftHandLandmarks;
+      const rightHandLandmarks = results.rightHandLandmarks;
 
       // Animate Pose
       if (pose2DLandmarks && pose3DLandmarks) {
