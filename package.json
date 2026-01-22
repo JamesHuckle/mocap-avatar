@@ -6,7 +6,8 @@
     "dev": "FAST_REFRESH=false next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "chmod +x node_modules/fbx2vrma-converter/setup.sh && bash node_modules/fbx2vrma-converter/setup.sh"
   },
   "dependencies": {
     "@chakra-ui/react": "^2.8.2",
@@ -32,10 +33,10 @@
     "react-circular-progressbar": "^2.1.0",
     "react-dom": "18.2.0",
     "three": "^0.151.3",
-    "typescript": "5.1.3"
+    "typescript": "5.1.3",
+    "fbx2vrma-converter": "^1.0.2"
   },
   "devDependencies": {
-    "@types/formidable": "^3.4.6",
-    "fbx2vrma-converter": "^1.0.2"
+    "@types/formidable": "^3.4.6"
   }
 }
