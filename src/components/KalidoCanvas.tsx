@@ -237,19 +237,9 @@ export default function KalidoCanvas({
           rigRotation('chest', riggedPose.Spine, 0.25);
           rigRotation('spine', riggedPose.Spine, 0.45);
 
-          // Apply 20 degree offset to lower arms (aesthetic adjustment)
-          const armLowerOffset = -20 * (Math.PI / 180); // -20 degrees in radians
-          rigRotation('leftUpperArm', {
-            x: riggedPose.LeftUpperArm.x + armLowerOffset,
-            y: riggedPose.LeftUpperArm.y,
-            z: riggedPose.LeftUpperArm.z,
-          });
+          rigRotation('leftUpperArm', riggedPose.LeftUpperArm);
           rigRotation('leftLowerArm', riggedPose.LeftLowerArm);
-          rigRotation('rightUpperArm', {
-            x: riggedPose.RightUpperArm.x + armLowerOffset,
-            y: riggedPose.RightUpperArm.y,
-            z: riggedPose.RightUpperArm.z,
-          });
+          rigRotation('rightUpperArm', riggedPose.RightUpperArm);
           rigRotation('rightLowerArm', riggedPose.RightLowerArm);
 
           rigRotation('leftUpperLeg', riggedPose.LeftUpperLeg);
