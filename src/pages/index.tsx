@@ -1,7 +1,7 @@
-import {Box} from '@chakra-ui/react';
+import {Box, Button} from '@chakra-ui/react';
 import Head from 'next/head';
 import dynamic from 'next/dynamic';
-import {useState, useEffect} from 'react';
+import {useState, useEffect, useRef} from 'react';
 import {GLTFLoader} from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {VRMLoaderPlugin, VRMUtils} from '@pixiv/three-vrm';
 import {CircularProgressbar} from 'react-circular-progressbar';
@@ -14,11 +14,33 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [vrmUrl, setVrmUrl] = useState<string>('/assets/unitree.vrm');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+
+  const openVrmFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleVrmFileSelection = (file: File | null | undefined) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+    objectUrlRef.current = url;
+    setVrmUrl(url);
+  };
+
+  const handleBuiltInVrmSelection = (url: string) => {
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setVrmUrl(url);
+  };
 
   useEffect(() => {
     /* VRM CHARACTER SETUP */
-    let objectUrlToRevoke: string | null = null;
-
     const loader = new GLTFLoader();
     loader.crossOrigin = 'anonymous';
     loader.register(parser => new VRMLoaderPlugin(parser));
@@ -51,10 +73,13 @@ export default function Home() {
     // Load initial VRM
     loadFromUrl(vrmUrl);
 
-    return () => {
-      if (objectUrlToRevoke) URL.revokeObjectURL(objectUrlToRevoke);
-    };
   }, [vrmUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    };
+  }, []);
 
   return (
     <>
@@ -65,6 +90,17 @@ export default function Home() {
         <link rel="icon" href="/website-favicon.png" />
       </Head>
       <main>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".vrm,model/gltf-binary,model/gltf+json"
+          onChange={e => {
+            const file = e.target.files?.[0];
+            handleVrmFileSelection(file);
+            e.currentTarget.value = '';
+          }}
+          style={{display: 'none'}}
+        />
         {!currentVrm ? (
           <Box
             background="#dedede"
@@ -131,21 +167,26 @@ export default function Home() {
                 <Box fontWeight="bold" mb="8px">
                   Load your own VRM (local)
                 </Box>
-                <input
-                  type="file"
-                  accept=".vrm,model/gltf-binary,model/gltf+json"
-                  onChange={e => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const url = URL.createObjectURL(file);
-                    setVrmUrl(url);
-                  }}
-                />
+                <Button
+                  size="sm"
+                  colorScheme="purple"
+                  onClick={openVrmFilePicker}
+                  width="100%"
+                >
+                  Choose VRM file
+                </Button>
+                <Box fontSize="12px" color="gray.600" mt="6px">
+                  Supported: .vrm
+                </Box>
               </Box>
             </Box>
           </Box>
         ) : (
-          <KalidoCanvas currentVrm={currentVrm} />
+          <KalidoCanvas
+            currentVrm={currentVrm}
+            onRequestVrmChange={openVrmFilePicker}
+            onSelectVrmUrl={handleBuiltInVrmSelection}
+          />
         )}
       </main>
     </>

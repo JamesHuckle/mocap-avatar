@@ -26,13 +26,22 @@ export interface HolisticResults {
   poseWorldLandmarks?: NormalizedLandmark[];
 }
 
-export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
+export default function KalidoCanvas({
+  currentVrm,
+  onRequestVrmChange,
+  onSelectVrmUrl,
+}: {
+  currentVrm: VRM | null;
+  onRequestVrmChange: () => void;
+  onSelectVrmUrl: (url: string) => void;
+}) {
   const [cameraIsOn, setCameraIsOn] = useState(true);
   const [isDayTheme, setisDayTheme] = useState(true);
   const [showServoPanel, setShowServoPanel] = useState(false);
   const [showAnimationPanel, setShowAnimationPanel] = useState(false);
   const [animationIsPlaying, setAnimationIsPlaying] = useState(false);
   const [debugComparisonMode, setDebugComparisonMode] = useState(false);
+  const [showVrmPresetMenu, setShowVrmPresetMenu] = useState(false);
   const [poseData, setPoseData] = useState<{
     poseLandmarks?: NormalizedLandmark[];
     worldLandmarks?: NormalizedLandmark[];
@@ -138,12 +147,12 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
       0.1,
       1000,
     );
-    orbitCamera.position.set(0.0, 0.0, 5);
+    orbitCamera.position.set(0.0, 1, 3.6);
     // controls
     const canvas = document.getElementById('myAvatar') as HTMLElement;
     const orbitControls = new OrbitControls(orbitCamera, canvas);
     orbitControls.screenSpacePanning = true;
-    orbitControls.target.set(0.0, 1.4, 0.0);
+    orbitControls.target.set(0.0, 0.9, 0.0);
     orbitControls.update();
 
     // renderer
@@ -531,7 +540,123 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
         />
         <Box
           position="absolute"
-          right="368px"
+          right="448px"
+          bottom="48px"
+          zIndex="301"
+          onMouseEnter={() => setShowVrmPresetMenu(true)}
+          onMouseLeave={() => setShowVrmPresetMenu(false)}
+        >
+          <ToggleButton
+            onClickButton={onRequestVrmChange}
+            buttonRightPosition="0px"
+            buttonBottomPosition="0px"
+            bgImageSrc="/person.png"
+            bgImageUrl=""
+          />
+          {showVrmPresetMenu && (
+            <Box
+              position="absolute"
+              bottom="62px"
+              right="-36px"
+              bg="rgba(15, 15, 25, 0.92)"
+              color="white"
+              border="1px solid rgba(160, 120, 255, 0.6)"
+              borderRadius="12px"
+              px="10px"
+              py="8px"
+              fontSize="11px"
+              lineHeight="1.2"
+              boxShadow="0 6px 18px rgba(0, 0, 0, 0.35)"
+              minW="180px"
+            >
+              <Box fontWeight="bold" mb="6px">
+                Built-in characters
+              </Box>
+              <Box
+                as="button"
+                display="block"
+                width="100%"
+                textAlign="left"
+                bg="transparent"
+                color="white"
+                border="0"
+                py="4px"
+                px="2px"
+                cursor="pointer"
+                _hover={{color: 'purple.200'}}
+                onClick={() => {
+                  onSelectVrmUrl('/assets/latin-dancer.vrm');
+                  setShowVrmPresetMenu(false);
+                }}
+              >
+                Latin Dancer
+              </Box>
+              <Box
+                as="button"
+                display="block"
+                width="100%"
+                textAlign="left"
+                bg="transparent"
+                color="white"
+                border="0"
+                py="4px"
+                px="2px"
+                cursor="pointer"
+                _hover={{color: 'purple.200'}}
+                onClick={() => {
+                  onSelectVrmUrl('/assets/AstroNacho.vrm');
+                  setShowVrmPresetMenu(false);
+                }}
+              >
+                AstroNacho
+              </Box>
+              <Box
+                as="button"
+                display="block"
+                width="100%"
+                textAlign="left"
+                bg="transparent"
+                color="white"
+                border="0"
+                py="4px"
+                px="2px"
+                cursor="pointer"
+                _hover={{color: 'purple.200'}}
+                onClick={() => {
+                  onSelectVrmUrl('/assets/unitree.vrm');
+                  setShowVrmPresetMenu(false);
+                }}
+              >
+                Unitree
+              </Box>
+              <Box mt="6px" fontSize="10px" color="gray.200">
+                Or click the icon to upload your own.
+              </Box>
+            </Box>
+          )}
+        </Box>
+        <Box
+          position="absolute"
+          right="448px"
+          bottom="104px"
+          bg="rgba(15, 15, 25, 0.85)"
+          color="white"
+          border="1px solid rgba(160, 120, 255, 0.6)"
+          borderRadius="12px"
+          px="10px"
+          py="6px"
+          fontSize="11px"
+          lineHeight="1.2"
+          boxShadow="0 6px 18px rgba(0, 0, 0, 0.35)"
+          cursor="pointer"
+          userSelect="none"
+          onClick={onRequestVrmChange}
+        >
+          Change character .vrm
+        </Box>
+        <Box
+          position="absolute"
+          right="320px"
           bottom="104px"
           bg="rgba(15, 15, 25, 0.85)"
           color="white"
