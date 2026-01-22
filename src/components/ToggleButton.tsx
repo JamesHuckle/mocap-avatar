@@ -34,7 +34,7 @@ const ToggleButton: React.FC<ToggleButtonProps> = ({
     >
       {bgImageSrc && (
         <Box p="5px">
-          <Image src={bgImageSrc} w="30px" h="30px" />
+          <Image src={bgImageSrc} w="30px" h="30px" alt="" />
         </Box>
       )}
     </button>

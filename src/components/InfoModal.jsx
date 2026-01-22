@@ -71,7 +71,7 @@ const InfoModal = ({useDisclosureFn}) => {
                 </React.Fragment>
               ))}
             </Box>
-            <Image w="80%" h="auto" objectFit="cover" src="/website-logo.png" />
+            <Image w="80%" h="auto" objectFit="cover" src="/website-logo.png" alt="Website logo" />
           </Box>
         </ModalBody>
       </ModalContent>

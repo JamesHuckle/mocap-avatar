@@ -416,9 +416,10 @@ export default function KalidoCanvas({
       animationFrameRef.current = requestAnimationFrame(detectAndAnimate);
     };
 
+    const videoElement = videoRef.current;
+
     // Start/stop camera based on state
     if (cameraIsOn) {
-      const videoElement = videoRef.current;
       if (videoElement) {
         navigator.mediaDevices
           .getUserMedia({video: {width: 640, height: 480}})
@@ -435,7 +436,6 @@ export default function KalidoCanvas({
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
-      const videoElement = videoRef.current;
       if (videoElement?.srcObject) {
         const stream = videoElement.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
