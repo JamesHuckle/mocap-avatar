@@ -26,7 +26,6 @@ import {
   VRMAnimation,
   createVRMAnimationClip,
 } from '@pixiv/three-vrm-animation';
-import {PROCEDURAL_ANIMATIONS, VRMAnimationPlayer, ProceduralAnimation} from '../lib/proceduralAnimations';
 import {calculateServosFromVRM, ServoPositions, JointPositions, extractVRMJointPositions, debugAnimationFrame, setVRMServoDebug} from '../lib/vrmServoCalculations';
 
 // Expose debug function globally for console access
@@ -36,15 +35,26 @@ if (typeof window !== 'undefined') {
 
 type UploadKind = 'vrma' | 'fbx';
 
+type BuiltInFbxAnimation = {
+  name: string;
+  fileName: string;
+};
+
+const BUILTIN_FBX_ANIMATIONS: BuiltInFbxAnimation[] = [
+  {name: 'Capoeira', fileName: 'Capoeira.fbx'},
+  {name: 'Hip Hop', fileName: 'Hip Hop Dancing.fbx'},
+  {name: 'Silly Dance', fileName: 'Silly Dancing.fbx'},
+  {name: 'Standing Idle', fileName: 'Standing Idle.fbx'},
+  {name: 'Dying', fileName: 'Dying.fbx'},
+];
+
 function getAnimationEmoji(name: string): string {
   const emojiMap: Record<string, string> = {
-    Wave: '👋',
+    Capoeira: '🤸',
     'Hip Hop': '🕺',
-    Groove: '💃',
-    Jump: '🦘',
-    Disco: '🪩',
-    Robot: '🤖',
-    Macarena: '🎵',
+    'Silly Dance': '😜',
+    'Standing Idle': '🧍',
+    Dying: '💀',
   };
   return emojiMap[name] || '🎬';
 }
@@ -77,10 +87,10 @@ export default function AnimationPlayer({
 
   const presets = useMemo(
     () =>
-      PROCEDURAL_ANIMATIONS.map((anim) => ({
+      BUILTIN_FBX_ANIMATIONS.map((anim) => ({
         name: anim.name,
         emoji: getAnimationEmoji(anim.name),
-        animation: anim,
+        fileName: anim.fileName,
       })),
     []
   );
@@ -94,9 +104,6 @@ export default function AnimationPlayer({
   const [loop, setLoop] = useState(true);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [hasLoadedAnimation, setHasLoadedAnimation] = useState(false);
-
-  // Procedural player (built-ins)
-  const proceduralRef = useRef<VRMAnimationPlayer | null>(null);
 
   // VRMA player (official format)
   const gltfLoaderRef = useRef<GLTFLoader | null>(null);
@@ -115,19 +122,6 @@ export default function AnimationPlayer({
   // Create players when VRM changes
   useEffect(() => {
     if (!vrm) return;
-    proceduralRef.current = new VRMAnimationPlayer(vrm);
-    proceduralRef.current.setOnUpdate((t, d) => {
-      setProgress(d > 0 ? (t / d) * 100 : 0);
-      // Emit servo positions during procedural animation playback
-      if (onServoPositionsUpdate) {
-        const servoPositions = calculateServosFromVRM(vrm);
-        const jointPositions = extractVRMJointPositions(vrm);
-        onServoPositionsUpdate(servoPositions, jointPositions);
-        // Debug logging (enable via setVRMServoDebug(true) in console)
-        debugAnimationFrame(vrm);
-      }
-    });
-
     mixerRef.current = new THREE.AnimationMixer(vrm.scene);
 
     return () => {
@@ -136,10 +130,8 @@ export default function AnimationPlayer({
       actionRef.current?.stop();
       actionRef.current = null;
       mixerRef.current = null;
-      proceduralRef.current?.dispose();
-      proceduralRef.current = null;
     };
-  }, [vrm, onServoPositionsUpdate]);
+  }, [vrm]);
 
   // Keep VRMA action speed in sync
   useEffect(() => {
@@ -154,7 +146,6 @@ export default function AnimationPlayer({
   }, [loop]);
 
   const stopAll = useCallback(() => {
-    proceduralRef.current?.stop();
     actionRef.current?.stop();
     actionRef.current = null;
     setIsPlaying(false);
@@ -201,9 +192,6 @@ export default function AnimationPlayer({
     (clip: THREE.AnimationClip, name: string) => {
       if (!vrm || !mixerRef.current) return;
 
-      // Stop procedural playback (but do NOT reset pose here; VRMA assumes current VRM rig)
-      proceduralRef.current?.stop();
-
       actionRef.current?.stop();
       const action = mixerRef.current.clipAction(clip);
       action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
@@ -224,45 +212,10 @@ export default function AnimationPlayer({
     [loop, onActiveChange, playbackSpeed, startMixerLoop, vrm]
   );
 
-  const loadProcedural = useCallback(
-    (animation: ProceduralAnimation) => {
-      if (!vrm || !proceduralRef.current) {
-        toast({
-          title: 'No VRM loaded',
-          description: 'Load a VRM model first.',
-          status: 'warning',
-          duration: 2500,
-        });
-        return;
-      }
-
-      stopAll();
-
-      proceduralRef.current.loadAnimation(animation);
-      proceduralRef.current.setLoop(loop);
-      proceduralRef.current.setSpeed(playbackSpeed);
-      proceduralRef.current.play();
-
-      setDuration(animation.duration);
-      setCurrentAnimation(animation.name);
-      setHasLoadedAnimation(true);
-      setIsPlaying(true);
-      onActiveChange(true);
-
-      toast({
-        title: `${animation.name} playing`,
-        status: 'success',
-        duration: 1500,
-      });
-    },
-    [loop, onActiveChange, playbackSpeed, stopAll, toast, vrm]
-  );
-
   const loadVrmaFromUrl = useCallback(
     async (url: string, nameForUi: string) => {
       if (!vrm || !gltfLoaderRef.current) return;
 
-      setIsLoading(true);
       try {
         const loader = gltfLoaderRef.current;
         const gltf = await new Promise<any>((resolve, reject) => {
@@ -286,8 +239,6 @@ export default function AnimationPlayer({
           status: 'error',
           duration: 4000,
         });
-      } finally {
-        setIsLoading(false);
       }
     },
     [playVrmaClip, toast, vrm]
@@ -303,6 +254,48 @@ export default function AnimationPlayer({
     }
     return await res.blob();
   }, []);
+
+  const loadBuiltInFbx = useCallback(
+    async (animation: BuiltInFbxAnimation) => {
+      if (!vrm) {
+        toast({
+          title: 'No VRM loaded',
+          description: 'Load a VRM model first.',
+          status: 'warning',
+          duration: 2500,
+        });
+        return;
+      }
+
+      stopAll();
+      setIsLoading(true);
+
+      try {
+        const url = `/assets/${encodeURI(animation.fileName)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`Failed to fetch ${animation.fileName}`);
+        }
+        const fbxBlob = await res.blob();
+        const fbxFile = new File([fbxBlob], animation.fileName, {type: 'application/octet-stream'});
+        const vrmaBlob = await convertFbxToVrma(fbxFile);
+        const vrmaUrl = URL.createObjectURL(vrmaBlob);
+        await loadVrmaFromUrl(vrmaUrl, animation.name);
+        URL.revokeObjectURL(vrmaUrl);
+      } catch (e) {
+        console.error(e);
+        toast({
+          title: 'Failed to load built-in animation',
+          description: e instanceof Error ? e.message : 'Unknown error',
+          status: 'error',
+          duration: 4000,
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [convertFbxToVrma, loadVrmaFromUrl, stopAll, toast, vrm]
+  );
 
   const handleUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -360,19 +353,6 @@ export default function AnimationPlayer({
       return;
     }
 
-    // Procedural: pause/resume (implemented as stop/play from current time is not supported)
-    // Keep it simple: stop on pause, restart on play.
-    if (proceduralRef.current) {
-      if (isPlaying) {
-        proceduralRef.current.pause();
-        setIsPlaying(false);
-        onActiveChange(false);
-      } else {
-        proceduralRef.current.play();
-        setIsPlaying(true);
-        onActiveChange(true);
-      }
-    }
   }, [hasLoadedAnimation, isPlaying, onActiveChange]);
 
   return (
@@ -432,16 +412,16 @@ export default function AnimationPlayer({
 
         <Box>
           <Text fontSize="sm" color="gray.400" mb={2}>
-            🎭 Built-in moves
+            🎭 Built-in moves (FBX)
           </Text>
           <SimpleGrid columns={4} spacing={2}>
             {presets.map((anim) => (
               <Button
                 key={anim.name}
                 size="sm"
-                colorScheme={currentAnimation === anim.animation.name ? 'purple' : 'gray'}
-                variant={currentAnimation === anim.animation.name ? 'solid' : 'outline'}
-                onClick={() => loadProcedural(anim.animation)}
+                colorScheme={currentAnimation === anim.name ? 'purple' : 'gray'}
+                variant={currentAnimation === anim.name ? 'solid' : 'outline'}
+                onClick={() => loadBuiltInFbx({name: anim.name, fileName: anim.fileName})}
                 h="auto"
                 py={2}
                 flexDir="column"

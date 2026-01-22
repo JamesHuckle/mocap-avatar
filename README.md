@@ -1,17 +1,10 @@
 <!-- PROJECT LOGO -->
 <br />
-<div align="center">
-  <a href="https://github.com/github_username/repo_name">
-    <img src="../media/src/images/vrm-mocap-high-resolution-logo.png?raw=true" alt="Logo" width="120">
-  </a>
 
 <h3 align="center">VRM Mocap</h3>
 
   <p align="center">
     A simple project of motion capture and avatar puppeteering!
-    <br />
-    <a href="https://vrm-mocap.vercel.app/"><strong>Website URL »</strong></a>
-    <br />
   </p>
 </div>
 

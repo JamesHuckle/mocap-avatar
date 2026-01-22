@@ -13,10 +13,7 @@ export default function Home() {
   const [currentVrm, setCurrentVrm] = useState(null);
   const [progress, setProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [vrmUrl, setVrmUrl] = useState<string>(
-    'https://gooogle.com'
-    // 'https://pixiv.github.io/three-vrm/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm',
-  );
+  const [vrmUrl, setVrmUrl] = useState<string>('/assets/unitree.vrm');
 
   useEffect(() => {
     /* VRM CHARACTER SETUP */

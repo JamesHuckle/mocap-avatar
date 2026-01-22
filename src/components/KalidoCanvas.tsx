@@ -27,9 +27,9 @@ export interface HolisticResults {
 }
 
 export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
-  const [cameraIsOn, setCameraIsOn] = useState(false);
+  const [cameraIsOn, setCameraIsOn] = useState(true);
   const [isDayTheme, setisDayTheme] = useState(true);
-  const [showServoPanel, setShowServoPanel] = useState(true);
+  const [showServoPanel, setShowServoPanel] = useState(false);
   const [showAnimationPanel, setShowAnimationPanel] = useState(false);
   const [animationIsPlaying, setAnimationIsPlaying] = useState(false);
   const [debugComparisonMode, setDebugComparisonMode] = useState(false);
@@ -529,6 +529,27 @@ export default function KalidoCanvas({currentVrm}: {currentVrm: VRM | null}) {
           bgImageSrc="/robot.svg"
           bgImageUrl=""
         />
+        <Box
+          position="absolute"
+          right="368px"
+          bottom="104px"
+          bg="rgba(15, 15, 25, 0.85)"
+          color="white"
+          border="1px solid rgba(160, 120, 255, 0.6)"
+          borderRadius="12px"
+          px="10px"
+          py="6px"
+          fontSize="11px"
+          lineHeight="1.2"
+          boxShadow="0 6px 18px rgba(0, 0, 0, 0.35)"
+          cursor="pointer"
+          userSelect="none"
+          onClick={() => setShowAnimationPanel(prev => !prev)}
+        >
+          Test built-in dances
+          <br />
+          or upload your own.
+        </Box>
         <ToggleButton
           onClickButton={() => setShowAnimationPanel(prev => !prev)}
           buttonRightPosition="368px"
